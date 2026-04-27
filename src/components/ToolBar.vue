@@ -69,7 +69,7 @@ import API, { apiTargetName } from '@api'
 import { CircleCheckFilled, Edit } from '@element-plus/icons-vue'
 import hotkeys from 'hotkeys-js'
 import { getErrorMessage, selectJsonFile } from '@utils/jsonFile'
-import { getSourceName, isInvaildSource, normalizeSource } from '../utils/souce'
+import { getSourceName, isValidSource, normalizeSource } from '../utils/source'
 import {
   downloadSourceConfig,
   persistSourceConfig,
@@ -180,7 +180,7 @@ const redo = () => {
 const saveSource = () => {
   const kind = getCurrentSourceKind()
   const source = store.currentSource
-  if (isInvaildSource(source)) {
+  if (isValidSource(source)) {
     normalizeSource(source)
     API.saveSource(source, kind).then(({ data }) => {
       const sourceName = getSourceName(source)

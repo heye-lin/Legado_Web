@@ -15,7 +15,7 @@
 
 <script setup lang="ts">
 import { Edit } from '@element-plus/icons-vue'
-import { getSourceUniqueKey, getSourceName } from '@/utils/souce'
+import { getSourceUniqueKey, getSourceName } from '@/utils/source'
 import type { Source } from '@/source'
 
 const props = defineProps<{

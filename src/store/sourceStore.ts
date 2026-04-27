@@ -4,7 +4,7 @@ import {
   emptyRssSource,
   getSourceUniqueKey,
   convertSourcesToMap,
-} from '@utils/souce'
+} from '@utils/source'
 import type { BookSoure, RssSource, Source } from '@/source'
 import {
   type SourceKind,

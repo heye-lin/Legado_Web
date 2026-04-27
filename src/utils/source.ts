@@ -4,7 +4,7 @@ import { isNullOrBlank } from './utils'
 const isBookSource = (source: Source): source is BookSoure =>
   'bookSourceName' in source
 
-export const isInvaildSource: (source: Source) => boolean = source => {
+export const isValidSource: (source: Source) => boolean = source => {
   if (isBookSource(source)) {
     return (
       !isNullOrBlank(source.bookSourceName) &&

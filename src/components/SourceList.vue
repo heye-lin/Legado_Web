@@ -47,7 +47,7 @@ import {
   isSourceMatches,
   getSourceUniqueKey,
   convertSourcesToMap,
-} from '@utils/souce'
+} from '@utils/source'
 import VirtualList from 'vue3-virtual-scroll-list'
 import SourceItem from './SourceItem.vue'
 import type { Source } from '@/source'
