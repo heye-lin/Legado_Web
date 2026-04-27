@@ -79,9 +79,9 @@ type BookSoure = BaseSource & {
   // 段评规则
   ruleReview?: ReviewRule
 }
-type RuleSearch = {
+type SearchRule = {
   checkKeyWord?: string
-  [prop: string]: string
+  [prop: string]: string | undefined
 }
 /* type ExploreRule = {
     [prop:string]: string

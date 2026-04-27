@@ -11,18 +11,29 @@ import rssSourceConfig from '@/config/rssSourceEditConfig'
 import '@/assets/sourceeditor.css'
 import { useDark } from '@vueuse/core'
 import type { SourceConfig } from '@/config/sourceConfig'
+import { isBookSourceKind, sourceKindFromPath } from '@/utils/sourceKind'
 
 useDark()
 
-let config: SourceConfig
+const store = useSourceStore()
+const route = useRoute()
 
-if (/bookSource/i.test(location.href)) {
-  config = bookSourceConfig as SourceConfig
-  document.title = '书源管理'
-} else {
-  config = rssSourceConfig as SourceConfig
-  document.title = '订阅源管理'
-}
+const currentSourceKind = computed(() => sourceKindFromPath(route.fullPath))
+const config = computed(
+  () =>
+    (isBookSourceKind(currentSourceKind.value)
+      ? bookSourceConfig
+      : rssSourceConfig) as SourceConfig,
+)
+
+watch(
+  currentSourceKind,
+  kind => {
+    store.syncCurrentSourceKind(kind)
+    document.title = isBookSourceKind(kind) ? '书源管理' : '订阅源管理'
+  },
+  { immediate: true },
+)
 </script>
 <style lang="scss" scoped>
 .editor {

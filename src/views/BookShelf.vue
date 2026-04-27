@@ -156,6 +156,7 @@ import '@/assets/fonts/shelffont.css'
 import { useBookStore } from '@/store'
 import githubUrl from '@/assets/imgs/github.png'
 import { useLoading } from '@/hooks/loading'
+import { useStandaloneBookImport } from '@/hooks/useStandaloneBookImport'
 import { Search as SearchIcon } from '@element-plus/icons-vue'
 import { baseURL_localStorage_key } from '@/api/axios'
 import API, {
@@ -167,10 +168,36 @@ import API, {
 import { validatorHttpUrl } from '@/utils/utils'
 import type { Book, SeachBook } from '@/book'
 import type { webReadConfig } from '@/web'
-import type { StandaloneBackupData } from '@/api/standalone'
+import {
+  type BookshelfBook,
+  type ReadingRecentBook,
+  clearReadingSession,
+  clearStoredReadingRecent,
+  createDefaultReadingRecent,
+  filterShelfBooks,
+  getBookReadPosition,
+  getErrorMessage,
+  hasBookOnShelf,
+  isSearchBook,
+  loadStoredReadingRecent,
+  saveReadingRecent,
+  saveReadingSession,
+} from '@/utils/bookshelf'
 
 const store = useBookStore()
 const isNight = computed(() => store.isNight)
+const shelf = computed(() => store.shelf)
+
+const readingRecent = ref<ReadingRecentBook>(createDefaultReadingRecent())
+const resetReadingRecent = () => {
+  readingRecent.value = createDefaultReadingRecent()
+  clearStoredReadingRecent()
+}
+
+const restoreReadingRecent = () => {
+  const storedRecent = loadStoredReadingRecent()
+  if (storedRecent !== undefined) readingRecent.value = storedRecent
+}
 
 /** shortcuts of `store.setConfig` */
 const applyReadConfig = (config?: webReadConfig) => {
@@ -181,17 +208,7 @@ const applyReadConfig = (config?: webReadConfig) => {
   }
 }
 
-const readingRecent = ref<typeof store.readingBook>({
-  name: '尚无阅读记录',
-  author: '',
-  bookUrl: '',
-  chapterIndex: 0,
-  chapterPos: 0,
-  isSeachBook: false,
-})
-
 const shelfWrapper = ref<HTMLElement>()
-//const shelfWrapper = useTemplateRef<HTMLElement>("shelfWrapper")
 const { showLoading, closeLoading, loadingWrapper, isLoading } = useLoading(
   shelfWrapper,
   '正在获取书籍信息',
@@ -199,7 +216,6 @@ const { showLoading, closeLoading, loadingWrapper, isLoading } = useLoading(
 
 // 书架书籍和在线书籍搜索
 const books = shallowRef<Book[] | SeachBook[]>([])
-const shelf = computed(() => store.shelf)
 const searchWord = ref('')
 const searchPlaceholder = computed(() =>
   isStandaloneMode
@@ -207,16 +223,21 @@ const searchPlaceholder = computed(() =>
     : '搜索书籍，在线书籍自动加入书架',
 )
 const isSearching = ref(false)
-const normalizeSearchText = (value: string) => value.trim().toLocaleLowerCase()
-const filterShelfBooks = (keyword: string) => {
-  const key = normalizeSearchText(keyword)
-  if (key.length === 0) return shelf.value
-  return shelf.value.filter(book => {
-    const text =
-      `${book.name} ${book.author} ${book.kind ?? ''}`.toLocaleLowerCase()
-    return text.includes(key)
-  })
+let activeOnlineSearchId = 0
+
+const isActiveOnlineSearch = (searchId: number, searchKey: string) =>
+  searchId === activeOnlineSearchId &&
+  isSearching.value &&
+  searchWord.value === searchKey
+
+const finishStaleOnlineSearch = (searchId: number, searchKey: string) => {
+  if (searchId !== activeOnlineSearchId || searchWord.value === searchKey) {
+    return
+  }
+  if (isLoading.value) closeLoading()
+  isSearching.value = false
 }
+
 const showStandaloneEmptyState = computed(
   () =>
     isStandaloneMode &&
@@ -224,47 +245,58 @@ const showStandaloneEmptyState = computed(
     !isSearching.value &&
     shelf.value.length === 0,
 )
+
 watchEffect(() => {
-  if (isSearching.value && searchWord.value != '') return
+  if (isSearching.value && searchWord.value !== '') return
   isSearching.value = false
-  books.value = []
-  if (searchWord.value == '') {
-    books.value = shelf.value
-    return
-  }
-  books.value = filterShelfBooks(searchWord.value)
+  books.value =
+    searchWord.value === ''
+      ? shelf.value
+      : filterShelfBooks(shelf.value, searchWord.value)
 })
+
+const searchLocalShelf = () => {
+  isSearching.value = false
+  books.value = filterShelfBooks(shelf.value, searchWord.value)
+  if (books.value.length === 0) ElMessage.info('本地书架中没有匹配书籍')
+}
+
 //搜索在线书籍
 const searchBook = () => {
-  if (searchWord.value == '') return
+  if (searchWord.value === '') return
   if (isStandaloneMode) {
-    isSearching.value = false
-    books.value = filterShelfBooks(searchWord.value)
-    if (books.value.length == 0) ElMessage.info('本地书架中没有匹配书籍')
+    searchLocalShelf()
     return
   }
+  const searchKey = searchWord.value
+  const searchId = ++activeOnlineSearchId
   books.value = []
   store.clearSearchBooks()
   showLoading()
   isSearching.value = true
   API.search(
-    searchWord.value,
-    searcBooks => {
-      if (isLoading) {
-        closeLoading()
+    searchKey,
+    searchBooks => {
+      if (!isActiveOnlineSearch(searchId, searchKey)) {
+        finishStaleOnlineSearch(searchId, searchKey)
+        return
       }
+      if (isLoading.value) closeLoading()
       try {
-        store.setSearchBooks(searcBooks)
+        store.setSearchBooks(searchBooks)
         books.value = store.searchBooks
-        //store.searchBooks.forEach((item) => books.value.push(item));
       } catch (e) {
         ElMessage.error('后端数据错误')
         throw e
       }
     },
     () => {
+      if (!isActiveOnlineSearch(searchId, searchKey)) {
+        finishStaleOnlineSearch(searchId, searchKey)
+        return
+      }
       closeLoading()
-      if (books.value.length == 0) {
+      if (books.value.length === 0) {
         ElMessage.info('搜索结果为空')
       }
     },
@@ -298,7 +330,6 @@ const setLegadoRetmoteUrl = () => {
           connectionStore.setNewConnect(true)
           instance.confirmButtonLoading = true
           instance.confirmButtonText = '校验中……'
-          // instance.inputValue
           const url = new URL(instance.inputValue).toString()
           API.getReadConfig(url)
             .then(function (config) {
@@ -329,213 +360,28 @@ const setLegadoRetmoteUrl = () => {
   )
 }
 
-const fileInput = ref<HTMLInputElement>()
-const backupFileInput = ref<HTMLInputElement>()
-const isDraggingFile = ref(false)
-const dragDepth = ref(0)
-
-const isTextFile = (file: File) =>
-  file.name.toLocaleLowerCase().endsWith('.txt') || file.type === 'text/plain'
-
-const hasDragFiles = (event: DragEvent) =>
-  Array.from(event.dataTransfer?.types ?? []).includes('Files')
-
-const getErrorMessage = (error: unknown) =>
-  error instanceof Error ? error.message : String(error)
-
-const formatFileDate = (date: Date) => {
-  const pad = (value: number) => value.toString().padStart(2, '0')
-  return `${date.getFullYear()}${pad(date.getMonth() + 1)}${pad(date.getDate())}_${pad(date.getHours())}${pad(date.getMinutes())}${pad(date.getSeconds())}`
-}
-
-const downloadJsonFile = (filename: string, data: unknown) => {
-  const url = URL.createObjectURL(
-    new Blob([JSON.stringify(data, null, 2)], {
-      type: 'application/json;charset=utf-8',
-    }),
-  )
-  const link = document.createElement('a')
-  link.href = url
-  link.download = filename
-  link.click()
-  window.setTimeout(() => URL.revokeObjectURL(url), 0)
-}
-
-const resetReadingRecent = () => {
-  readingRecent.value = {
-    name: '尚无阅读记录',
-    author: '',
-    bookUrl: '',
-    chapterIndex: 0,
-    chapterPos: 0,
-    isSeachBook: false,
-  }
-  localStorage.removeItem('readingRecent')
-}
-
-const clearReadingSession = () => {
-  ;[
-    'bookUrl',
-    'bookName',
-    'bookAuthor',
-    'chapterIndex',
-    'chapterPos',
-    'isSeachBook',
-  ].forEach(key => sessionStorage.removeItem(key))
-}
-
-const importTextFiles = async (files: File[]) => {
-  if (!isStandaloneMode || files.length === 0) return
-
-  const textFiles = files.filter(isTextFile)
-  if (textFiles.length === 0) {
-    ElMessage.warning('请导入 TXT 文件')
-    return
-  }
-  if (textFiles.length !== files.length) {
-    ElMessage.warning('已忽略非 TXT 文件')
-  }
-
-  let importedCount = 0
-  await loadingWrapper(
-    Promise.allSettled(
-      textFiles.map(file => API.importLocalTextBook(file)),
-    ).then(results => {
-      const successBooks: string[] = []
-      const failedMessages: string[] = []
-
-      results.forEach(result => {
-        if (result.status === 'rejected') {
-          failedMessages.push(getErrorMessage(result.reason))
-          return
-        }
-        if (result.value.data.isSuccess) {
-          successBooks.push(result.value.data.data.name)
-        } else {
-          failedMessages.push(result.value.data.errorMsg)
-        }
-      })
-
-      importedCount = successBooks.length
-      if (successBooks.length > 0) {
-        ElMessage.success(`已导入：${successBooks.join('、')}`)
-      }
-      if (failedMessages.length > 0) {
-        ElMessage.error(failedMessages.join('；'))
-      }
-    }),
-  )
-  if (importedCount > 0) await store.loadBookShelf(true)
-}
-
-const importLocalBooks = async (event: Event) => {
-  const input = event.target as HTMLInputElement
-  const files = Array.from(input.files ?? [])
-  input.value = ''
-  await importTextFiles(files)
-}
-
-const handleShelfDragEnter = (event: DragEvent) => {
-  if (!isStandaloneMode || !hasDragFiles(event)) return
-  event.preventDefault()
-  dragDepth.value += 1
-  isDraggingFile.value = true
-}
-
-const handleShelfDragOver = (event: DragEvent) => {
-  if (!isStandaloneMode || !hasDragFiles(event)) return
-  event.preventDefault()
-  if (event.dataTransfer !== null) event.dataTransfer.dropEffect = 'copy'
-  isDraggingFile.value = true
-}
-
-const handleShelfDragLeave = (event: DragEvent) => {
-  if (!isStandaloneMode || !hasDragFiles(event)) return
-  event.preventDefault()
-  dragDepth.value = Math.max(0, dragDepth.value - 1)
-  isDraggingFile.value = dragDepth.value > 0
-}
-
-const handleShelfDrop = async (event: DragEvent) => {
-  if (!isStandaloneMode || !hasDragFiles(event)) return
-  event.preventDefault()
-  dragDepth.value = 0
-  isDraggingFile.value = false
-  await importTextFiles(Array.from(event.dataTransfer?.files ?? []))
-}
-
-const exportStandaloneBackup = async () => {
-  const result = await API.exportStandaloneData()
-  if (!result.data.isSuccess) {
-    ElMessage.error(result.data.errorMsg)
-    return
-  }
-  downloadJsonFile(
-    `legado-web-backup_${formatFileDate(new Date())}.json`,
-    result.data.data,
-  )
-  ElMessage.success('本地数据备份已导出')
-}
-
-const importStandaloneBackup = async (event: Event) => {
-  const input = event.target as HTMLInputElement
-  const file = input.files?.[0]
-  input.value = ''
-  if (file === undefined) return
-
-  let backup: StandaloneBackupData
-  try {
-    backup = JSON.parse(await file.text()) as StandaloneBackupData
-  } catch (error) {
-    ElMessage.error(`备份文件解析失败：${getErrorMessage(error)}`)
-    return
-  }
-
-  const result = await API.importStandaloneData(backup)
-  if (!result.data.isSuccess) {
-    ElMessage.error(result.data.errorMsg)
-    return
-  }
-
-  store.setConfig(backup.readConfig)
-  store.clearSearchBooks()
-  resetReadingRecent()
-  clearReadingSession()
-  await store.loadBookShelf(true)
-  ElMessage.success(result.data.data)
-}
-
-const clearStandaloneData = async () => {
-  try {
-    await ElMessageBox.confirm(
-      '此操作会删除浏览器中的本地书籍、章节、进度、阅读设置和源配置。确定继续？',
-      '清空本地数据',
-      {
-        confirmButtonText: '清空',
-        cancelButtonText: '取消',
-        type: 'warning',
-      },
-    )
-  } catch {
-    return
-  }
-
-  const result = await API.clearStandaloneData()
-  if (!result.data.isSuccess) {
-    ElMessage.error(result.data.errorMsg)
-    return
-  }
-
-  store.clearSearchBooks()
-  resetReadingRecent()
-  clearReadingSession()
-  store.setConfig(await API.getReadConfig())
-  await store.loadBookShelf(true)
-  ElMessage.success(result.data.data)
-}
+const {
+  fileInput,
+  backupFileInput,
+  isDraggingFile,
+  importLocalBooks,
+  handleShelfDragEnter,
+  handleShelfDragOver,
+  handleShelfDragLeave,
+  handleShelfDrop,
+  exportStandaloneBackup,
+  importStandaloneBackup,
+  clearStandaloneData,
+} = useStandaloneBookImport({
+  loadingWrapper,
+  reloadShelf: () => store.loadBookShelf(true),
+  setReadConfig: config => store.setConfig(config),
+  clearSearchBooks: () => store.clearSearchBooks(),
+  resetReadingRecent,
+})
 
 const router = useRouter()
-const handleBookDelete = async (book: SeachBook | Book) => {
+const handleBookDelete = async (book: BookshelfBook) => {
   try {
     await ElMessageBox.confirm(
       `确定从本地书架删除《${book.name}》？`,
@@ -566,24 +412,22 @@ const handleBookDelete = async (book: SeachBook | Book) => {
   }
 }
 
-const handleBookClick = async (book: SeachBook | Book) => {
-  // 判断是否为 searchBook
-  const isSeachBook = 'respondTime' in book
+const handleBookClick = async (book: BookshelfBook) => {
+  const isSeachBook = isSearchBook(book)
   if (isSeachBook) {
     await API.saveBook(book)
   }
-  const {
-    bookUrl,
-    name,
-    author,
-    // @ts-expect-error: descruct with default value
-    durChapterIndex = 0,
-    // @ts-expect-error: descruct with default value
-    durChapterPos = 0,
-  } = book
-
-  toDetail(bookUrl, name, author, durChapterIndex, durChapterPos, isSeachBook)
+  const { chapterIndex, chapterPos } = getBookReadPosition(book)
+  toDetail(
+    book.bookUrl,
+    book.name,
+    book.author,
+    chapterIndex,
+    chapterPos,
+    isSeachBook,
+  )
 }
+
 const toDetail = (
   bookUrl: string,
   bookName: string,
@@ -595,29 +439,23 @@ const toDetail = (
 ) => {
   if (bookName === '尚无阅读记录') return
   // 最近书籍不再书架上 自动搜索
-  if (
-    fromReadRecentClick &&
-    shelf.value.every(book => book.bookUrl !== bookUrl)
-  ) {
+  if (fromReadRecentClick && !hasBookOnShelf(shelf.value, bookUrl)) {
     searchWord.value = bookName
     searchBook()
     return
   }
-  sessionStorage.setItem('bookUrl', bookUrl)
-  sessionStorage.setItem('bookName', bookName)
-  sessionStorage.setItem('bookAuthor', bookAuthor)
-  sessionStorage.setItem('chapterIndex', String(chapterIndex))
-  sessionStorage.setItem('chapterPos', String(chapterPos))
-  sessionStorage.setItem('isSeachBook', String(isSeachBook))
-  readingRecent.value = {
+
+  const recent: ReadingRecentBook = {
     name: bookName,
     author: bookAuthor,
     bookUrl,
     chapterIndex,
     chapterPos,
-    isSeachBook,
+    isSeachBook: isSeachBook ?? false,
   }
-  localStorage.setItem('readingRecent', JSON.stringify(readingRecent.value))
+  saveReadingSession(recent)
+  readingRecent.value = recent
+  saveReadingRecent(recent)
   router.push({
     path: '/chapter',
   })
@@ -632,26 +470,7 @@ const loadShelf = async () => {
 
 onMounted(() => {
   //获取最近阅读书籍
-  const readingRecentStr = localStorage.getItem('readingRecent')
-  if (readingRecentStr != null) {
-    try {
-      const parsed = JSON.parse(readingRecentStr)
-      if (
-        typeof parsed.name === 'string' &&
-        typeof parsed.author === 'string' &&
-        typeof parsed.bookUrl === 'string'
-      ) {
-        readingRecent.value = parsed
-        if (typeof readingRecent.value.chapterIndex == 'undefined') {
-          readingRecent.value.chapterIndex = 0
-        }
-      } else {
-        resetReadingRecent()
-      }
-    } catch {
-      resetReadingRecent()
-    }
-  }
+  restoreReadingRecent()
   console.log('bookshelf mounted')
   loadingWrapper(loadShelf())
 })

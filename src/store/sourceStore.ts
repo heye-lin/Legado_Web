@@ -6,17 +6,37 @@ import {
   convertSourcesToMap,
 } from '@utils/souce'
 import type { BookSoure, RssSource, Source } from '@/source'
+import {
+  type SourceKind,
+  getCurrentSourceKind,
+  isBookSourceKind,
+} from '@/utils/sourceKind'
 
-const isBookSource = /bookSource/i.test(location.href)
-const emptySource = isBookSource ? emptyBookSource : emptyRssSource
+const cloneSource = <T extends Source>(source: T): T =>
+  JSON.parse(JSON.stringify(source)) as T
+const getEmptySource = (kind: SourceKind) =>
+  isBookSourceKind(kind) ? emptyBookSource : emptyRssSource
+const sourceMatchesKind = (source: Source, kind: SourceKind) => {
+  if (isBookSourceKind(kind)) return !('sourceUrl' in source)
+  return !(
+    'bookSourceUrl' in source ||
+    'bookSourceName' in source ||
+    'ruleSearch' in source ||
+    'ruleBookInfo' in source ||
+    'ruleToc' in source ||
+    'ruleExplore' in source
+  )
+}
 
 export const useSourceStore = defineStore('source', {
   state: () => {
+    const currentSourceKind = getCurrentSourceKind()
     return {
+      currentSourceKind,
       bookSources: shallowRef([] as BookSoure[]), // 临时存放所有书源,
       rssSources: shallowRef([] as RssSource[]), // 临时存放所有订阅源
       savedSources: [] as Source[], // 批量保存到阅读app成功的源
-      currentSource: JSON.parse(JSON.stringify(emptySource)) as Source, // 当前编辑的源
+      currentSource: cloneSource(getEmptySource(currentSourceKind)) as Source, // 当前编辑的源
       currentTab: localStorage.getItem('tabName') || 'editTab',
       editTabSource: {} as Source, // 生成序列化的json数据
       isDebuging: false,
@@ -24,23 +44,37 @@ export const useSourceStore = defineStore('source', {
   },
   getters: {
     sources: (state): Source[] =>
-      isBookSource ? state.bookSources : state.rssSources,
+      isBookSourceKind(state.currentSourceKind)
+        ? state.bookSources
+        : state.rssSources,
     sourcesMap: function (): Map<string, Source> {
       return convertSourcesToMap(this.sources)
     },
     savedSourcesMap: (state): Map<string, Source> =>
       convertSourcesToMap(state.savedSources),
     currentSourceUrl: state =>
-      isBookSource
+      isBookSourceKind(state.currentSourceKind)
         ? (state.currentSource as BookSoure).bookSourceUrl
         : (state.currentSource as RssSource).sourceUrl,
     searchKey: (state): string =>
-      isBookSource
+      isBookSourceKind(state.currentSourceKind)
         ? (state.currentSource as BookSoure)?.ruleSearch?.checkKeyWord || '我的'
         : '',
   },
   actions: {
+    syncCurrentSourceKind(kind: SourceKind = getCurrentSourceKind()) {
+      const kindChanged = this.currentSourceKind !== kind
+      this.currentSourceKind = kind
+      if (kindChanged || !sourceMatchesKind(this.currentSource, kind)) {
+        this.currentSource = cloneSource(getEmptySource(kind)) as Source
+        this.editTabSource = {} as Source
+      }
+    },
+    ensureCurrentSourceKind() {
+      this.syncCurrentSourceKind()
+    },
     startDebug() {
+      this.ensureCurrentSourceKind()
       this.currentTab = 'editDebug'
       this.isDebuging = true
     },
@@ -49,8 +83,9 @@ export const useSourceStore = defineStore('source', {
     },
 
     //拉取源后保存
-    saveSources(data: Source[]) {
-      if (isBookSource) {
+    saveSources(data: Source[], kind?: SourceKind) {
+      const targetKind = kind ?? this.currentSourceKind
+      if (isBookSourceKind(targetKind)) {
         this.bookSources = markRaw(data) as BookSoure[]
       } else {
         this.rssSources = markRaw(data) as RssSource[]
@@ -61,8 +96,9 @@ export const useSourceStore = defineStore('source', {
       this.savedSources = returnSoures
     },
     //删除源
-    deleteSources(data: Source[]) {
-      const sources: Source[] = isBookSource
+    deleteSources(data: Source[], kind?: SourceKind) {
+      const targetKind = kind ?? this.currentSourceKind
+      const sources: Source[] = isBookSourceKind(targetKind)
         ? this.bookSources
         : this.rssSources
       data.forEach(source => {
@@ -75,11 +111,11 @@ export const useSourceStore = defineStore('source', {
       const source = this.currentSource,
         map = this.sourcesMap
       map.set(getSourceUniqueKey(source), JSON.parse(JSON.stringify(source)))
-      this.saveSources(Array.from(map.values()))
+      this.saveSources(Array.from(map.values()), this.currentSourceKind)
     },
     // 更改当前编辑的源qq
     changeCurrentSource(source: Source) {
-      this.currentSource = JSON.parse(JSON.stringify(source))
+      this.currentSource = cloneSource(source)
     },
     // update editTab tabName and editTab info
     changeTabName(tabName: string) {
@@ -87,7 +123,7 @@ export const useSourceStore = defineStore('source', {
       localStorage.setItem('tabName', tabName)
     },
     changeEditTabSource(source: Source) {
-      this.editTabSource = JSON.parse(JSON.stringify(source))
+      this.editTabSource = cloneSource(source)
     },
     editHistory(history: Source) {
       let historyObj
@@ -121,13 +157,17 @@ export const useSourceStore = defineStore('source', {
     },
     clearEdit() {
       this.editTabSource = {} as Source
-      this.currentSource = JSON.parse(JSON.stringify(emptySource)) //复制一份新对象
+      this.currentSource = cloneSource(getEmptySource(this.currentSourceKind)) //复制一份新对象
     },
 
-    // clear all source
-    clearAllSource() {
-      this.bookSources = []
-      this.rssSources = []
+    // clear current source list
+    clearAllSource(kind?: SourceKind) {
+      const targetKind = kind ?? this.currentSourceKind
+      if (isBookSourceKind(targetKind)) {
+        this.bookSources = []
+      } else {
+        this.rssSources = []
+      }
       this.savedSources = []
     },
   },

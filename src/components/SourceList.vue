@@ -32,7 +32,7 @@
   <el-checkbox-group id="source-list" v-model="sourceUrlSelect">
     <virtual-list
       style="height: 100%; overflow-y: auto; overflow-x: hidden"
-      :data-key="(source: Source) => getSourceName(source)"
+      :data-key="(source: Source) => getSourceUniqueKey(source)"
       :data-sources="sourcesFiltered"
       :data-component="SourceItem"
       :estimate-size="45"
@@ -46,12 +46,18 @@ import { Folder, Delete, Download, Search } from '@element-plus/icons-vue'
 import {
   isSourceMatches,
   getSourceUniqueKey,
-  getSourceName,
   convertSourcesToMap,
 } from '@utils/souce'
 import VirtualList from 'vue3-virtual-scroll-list'
 import SourceItem from './SourceItem.vue'
 import type { Source } from '@/source'
+import { getErrorMessage, selectJsonFile } from '@/utils/jsonFile'
+import {
+  downloadSourceConfig,
+  persistSourceConfig,
+  readSourceConfigFile,
+} from '@/utils/sourceFile'
+import { getCurrentSourceKind } from '@/utils/sourceKind'
 
 const store = useSourceStore()
 const sourceUrlSelect = ref<string[]>([])
@@ -80,10 +86,11 @@ const sourceSelect = computed<Source[]>(() => {
 })
 
 const deleteSelectSources = () => {
+  const kind = getCurrentSourceKind()
   const sourceSelectValue = sourceSelect.value
-  API.deleteSource(sourceSelectValue).then(({ data }) => {
+  API.deleteSource(sourceSelectValue, kind).then(({ data }) => {
     if (!data.isSuccess) return ElMessage.error(data.errorMsg)
-    store.deleteSources(sourceSelectValue)
+    store.deleteSources(sourceSelectValue, kind)
     const sourceUrlSelectRawValue = toRaw(sourceUrlSelect.value)
     sourceSelectValue.forEach(source => {
       const index = sourceUrlSelectRawValue.indexOf(getSourceUniqueKey(source))
@@ -92,54 +99,39 @@ const deleteSelectSources = () => {
     sourceUrlSelect.value = sourceUrlSelectRawValue
   })
 }
-const clearAllSources = () => {
-  store.clearAllSource()
+const clearAllSources = async () => {
+  const kind = getCurrentSourceKind()
+  try {
+    await persistSourceConfig([], kind)
+  } catch (error) {
+    return ElMessage.error(getErrorMessage(error))
+  }
+  store.clearAllSource(kind)
   sourceUrlSelect.value = []
 }
 
 //导入本地文件
 const importSourceFile = () => {
-  const input = document.createElement('input')
-  input.type = 'file'
-  input.accept = '.json,.txt'
-  input.addEventListener('change', () => {
-    const files = input.files
-    if (files === null) {
-      return ElMessage.info('未选择文件')
-    }
-    const reader = new FileReader()
-    reader.readAsText(files[0])
-    reader.onload = () => {
-      try {
-        const jsonData = JSON.parse(reader.result as string)
-        store.saveSources(jsonData)
-      } catch (e: unknown) {
-        ElMessage.error('上传的源格式错误: ' + (e as Error).message)
-      }
+  selectJsonFile(async file => {
+    if (file === undefined) return ElMessage.info('未选择文件')
+    try {
+      const kind = getCurrentSourceKind()
+      const jsonData = await readSourceConfigFile(file, kind)
+      await persistSourceConfig(jsonData, kind)
+      store.saveSources(jsonData, kind)
+      ElMessage.success(`已导入 ${jsonData.length} 条源`)
+    } catch (error) {
+      ElMessage.error('上传的源格式错误: ' + getErrorMessage(error))
     }
   })
-  input.click()
 }
 
-const isBookSource = /bookSource/i.test(window.location.href)
 const outExport = () => {
-  const exportFile = document.createElement('a')
   const sources =
-      sourceUrlSelect.value.length === 0
-        ? sourcesFiltered.value
-        : sourceSelect.value,
-    sourceType = isBookSource ? 'BookSource' : 'RssSource'
-
-  exportFile.download = `${sourceType}_${Date()
-    .replace(/.*?\s(\d+)\s(\d+)\s(\d+:\d+:\d+).*/, '$2$1$3')
-    .replace(/:/g, '')}.json`
-
-  const myBlob = new Blob([JSON.stringify(sources, null, 4)], {
-    type: 'application/json',
-  })
-  exportFile.href = window.URL.createObjectURL(myBlob)
-  exportFile.click()
-  window.URL.revokeObjectURL(exportFile.href) //avoid memory leak
+    sourceUrlSelect.value.length === 0
+      ? sourcesFiltered.value
+      : sourceSelect.value
+  downloadSourceConfig(sources, getCurrentSourceKind())
 }
 </script>
 

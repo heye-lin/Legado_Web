@@ -12,6 +12,11 @@ import type {
   SeachBook,
 } from '@/book'
 import type { Source } from '@/source'
+import {
+  type SourceKind,
+  getCurrentSourceKind,
+  isBookSourceKind,
+} from '@/utils/sourceKind'
 
 export type LeagdoApiResponse<T> = {
   isSuccess: boolean
@@ -195,35 +200,47 @@ const clearStandaloneData = () =>
     ? standaloneApi.clearStandaloneData()
     : standaloneOnly<string>()
 
-const isBookSource = /bookSource/i.test(location.href)
-
 // 源编辑API
 // Http
-const appGetSources = () =>
-  isBookSource ? ajax.get('getBookSources') : ajax.get('getRssSources')
-const getSources = () =>
-  isStandaloneMode ? standaloneApi.getSources() : appGetSources()
+const appGetSources = (kind: SourceKind) =>
+  isBookSourceKind(kind)
+    ? ajax.get('getBookSources')
+    : ajax.get('getRssSources')
+const getSources = (kind: SourceKind = getCurrentSourceKind()) =>
+  isStandaloneMode ? standaloneApi.getSources(kind) : appGetSources(kind)
 
-const appSaveSource = (data: Source) =>
-  isBookSource
+const appSaveSource = (data: Source, kind: SourceKind) =>
+  isBookSourceKind(kind)
     ? ajax.post<LeagdoApiResponse<string>>('saveBookSource', data)
     : ajax.post<LeagdoApiResponse<string>>('saveRssSource', data)
-const saveSource = (data: Source) =>
-  isStandaloneMode ? standaloneApi.saveSource(data) : appSaveSource(data)
+const saveSource = (data: Source, kind: SourceKind = getCurrentSourceKind()) =>
+  isStandaloneMode
+    ? standaloneApi.saveSource(data, kind)
+    : appSaveSource(data, kind)
 
-const appSaveSources = (data: Source[]) =>
-  isBookSource
+const appSaveSources = (data: Source[], kind: SourceKind) =>
+  isBookSourceKind(kind)
     ? ajax.post<LeagdoApiResponse<Source[]>>('saveBookSources', data)
     : ajax.post<LeagdoApiResponse<Source[]>>('saveRssSources', data)
-const saveSources = (data: Source[]) =>
-  isStandaloneMode ? standaloneApi.saveSources(data) : appSaveSources(data)
+const saveSources = (
+  data: Source[],
+  kind: SourceKind = getCurrentSourceKind(),
+) =>
+  isStandaloneMode
+    ? standaloneApi.saveSources(data, kind)
+    : appSaveSources(data, kind)
 
-const appDeleteSource = (data: Source[]) =>
-  isBookSource
+const appDeleteSource = (data: Source[], kind: SourceKind) =>
+  isBookSourceKind(kind)
     ? ajax.post<LeagdoApiResponse<string>>('deleteBookSources', data)
     : ajax.post<LeagdoApiResponse<string>>('deleteRssSources', data)
-const deleteSource = (data: Source[]) =>
-  isStandaloneMode ? standaloneApi.deleteSource(data) : appDeleteSource(data)
+const deleteSource = (
+  data: Source[],
+  kind: SourceKind = getCurrentSourceKind(),
+) =>
+  isStandaloneMode
+    ? standaloneApi.deleteSource(data, kind)
+    : appDeleteSource(data, kind)
 
 // webSocket
 const appDebug = (
@@ -231,9 +248,10 @@ const appDebug = (
   /** @type {string} */ searchKey: string,
   /** @type {(data: string) => void} */ onReceive: (data: string) => void,
   /** @type {() => void} */ onFinish: () => void,
+  kind: SourceKind,
 ) => {
   const url = new URL(
-    `${isBookSource ? 'bookSource' : 'rssSource'}Debug`,
+    `${isBookSourceKind(kind) ? 'bookSource' : 'rssSource'}Debug`,
     legado_webSocket_entry_point,
   )
 
@@ -256,10 +274,11 @@ const debug = (
   searchKey: string,
   onReceive: (data: string) => void,
   onFinish: () => void,
+  kind: SourceKind = getCurrentSourceKind(),
 ) =>
   isStandaloneMode
-    ? standaloneApi.debug(sourceUrl, searchKey, onReceive, onFinish)
-    : appDebug(sourceUrl, searchKey, onReceive, onFinish)
+    ? standaloneApi.debug(sourceUrl, searchKey, onReceive, onFinish, kind)
+    : appDebug(sourceUrl, searchKey, onReceive, onFinish, kind)
 
 /**
  * 从阅读获取需要特定处理的书籍封面

@@ -7,6 +7,11 @@ import type {
 } from '@/book'
 import type { BookSoure, RssSource, Source } from '@/source'
 import type { webReadConfig } from '@/web'
+import {
+  type SourceKind,
+  getCurrentSourceKind,
+  isBookSourceKind,
+} from '@/utils/sourceKind'
 import type { LeagdoApiResponse } from './api'
 
 const DB_NAME = 'legado-web-standalone'
@@ -75,6 +80,16 @@ const requestToPromise = <T>(request: IDBRequest<T>) =>
     request.onerror = () => reject(request.error)
   })
 
+const waitForRequests = async <T>(requests: IDBRequest<T>[]) => {
+  await Promise.all(requests.map(request => requestToPromise(request)))
+}
+
+const putRecords = <T>(store: IDBObjectStore, records: T[]) =>
+  waitForRequests(records.map(record => store.put(record)))
+
+const clearStores = (stores: IDBObjectStore[]) =>
+  waitForRequests(stores.map(store => store.clear()))
+
 const openDatabase = () => {
   if (dbPromise !== undefined) return dbPromise
 
@@ -94,8 +109,21 @@ const openDatabase = () => {
       }
     }
 
-    request.onsuccess = () => resolve(request.result)
-    request.onerror = () => reject(request.error)
+    request.onsuccess = () => {
+      const db = request.result
+      db.onversionchange = () => db.close()
+      resolve(db)
+    }
+    request.onerror = () => {
+      dbPromise = undefined
+      reject(request.error)
+    }
+    request.onblocked = () => {
+      dbPromise = undefined
+      reject(
+        new Error('浏览器数据库升级被其它页面阻塞，请关闭其它标签页后重试'),
+      )
+    }
   })
 
   return dbPromise
@@ -118,6 +146,12 @@ const waitForTransaction = (tx: IDBTransaction) =>
     tx.onabort = () => reject(tx.error)
   })
 
+const abortTransaction = (tx: IDBTransaction) => {
+  try {
+    tx.abort()
+  } catch {}
+}
+
 const readwriteStore = async <T>(
   storeName: StoreName,
   run: (store: IDBObjectStore) => Promise<T>,
@@ -131,9 +165,8 @@ const readwriteStore = async <T>(
     await done
     return result
   } catch (error) {
-    try {
-      tx.abort()
-    } catch {}
+    abortTransaction(tx)
+    await done.catch(() => undefined)
     throw error
   }
 }
@@ -151,9 +184,8 @@ const transaction = async <T>(
     await done
     return result
   } catch (error) {
-    try {
-      if (tx.error === null) tx.abort()
-    } catch {}
+    abortTransaction(tx)
+    await done.catch(() => undefined)
     throw error
   }
 }
@@ -178,17 +210,20 @@ const getChapterRecord = (bookUrl: string, index: number) =>
     requestToPromise(store.get(chapterId(bookUrl, index))),
   )
 
-const getAllChapterRecords = () =>
-  readonlyStore<ChapterRecord[]>(CHAPTER_STORE, store =>
-    requestToPromise(store.getAll()),
-  ).then(records =>
-    records.sort(
-      (a, b) => a.bookUrl.localeCompare(b.bookUrl) || a.index - b.index,
-    ),
-  )
+const toBookChapter = (chapter: ChapterRecord): BookChapter => ({
+  url: chapter.url,
+  title: chapter.title,
+  isVolume: chapter.isVolume,
+  baseUrl: chapter.baseUrl,
+  bookUrl: chapter.bookUrl,
+  index: chapter.index,
+  isVip: chapter.isVip,
+  isPay: chapter.isPay,
+})
 
 const deleteChapterRecords = (chapterStore: IDBObjectStore, bookUrl: string) =>
   new Promise<void>((resolve, reject) => {
+    const pendingDeletes: Promise<unknown>[] = []
     const cursorRequest = chapterStore
       .index('bookUrl')
       .openCursor(IDBKeyRange.only(bookUrl))
@@ -196,10 +231,10 @@ const deleteChapterRecords = (chapterStore: IDBObjectStore, bookUrl: string) =>
     cursorRequest.onsuccess = () => {
       const cursor = cursorRequest.result
       if (cursor === null) {
-        resolve()
+        Promise.all(pendingDeletes).then(() => resolve(), reject)
         return
       }
-      cursor.delete()
+      pendingDeletes.push(requestToPromise(cursor.delete()))
       cursor.continue()
     }
     cursorRequest.onerror = () => reject(cursorRequest.error)
@@ -210,10 +245,10 @@ const saveBookWithChapters = (book: Book, chapters: ChapterRecord[]) =>
     const bookStore = tx.objectStore(BOOK_STORE)
     const chapterStore = tx.objectStore(CHAPTER_STORE)
     await deleteChapterRecords(chapterStore, book.bookUrl)
-    bookStore.put(book)
-    for (const chapter of chapters) {
-      chapterStore.put(chapter)
-    }
+    await Promise.all([
+      requestToPromise(bookStore.put(book)),
+      putRecords(chapterStore, chapters),
+    ])
   })
 
 const readJson = <T>(key: string, fallback: T): T => {
@@ -235,102 +270,224 @@ const removeJson = (key: string) => {
   localStorage.removeItem(key)
 }
 
-const isRecord = (value: unknown): value is Record<string, unknown> =>
+type BackupRecord = Record<string, unknown>
+type BackupFieldType = 'string' | 'number' | 'boolean'
+type BackupFieldRule = readonly [field: string, type: BackupFieldType]
+
+const backupTypeLabel: Record<BackupFieldType, string> = {
+  string: '字符串',
+  number: '数字',
+  boolean: '布尔值',
+}
+
+const readConfigFields: BackupFieldRule[] = [
+  ['theme', 'number'],
+  ['font', 'number'],
+  ['fontSize', 'number'],
+  ['readWidth', 'number'],
+  ['jumpDuration', 'number'],
+  ['infiniteLoading', 'boolean'],
+  ['customFontName', 'string'],
+]
+const readConfigSpacingFields: BackupFieldRule[] = [
+  ['paragraph', 'number'],
+  ['line', 'number'],
+  ['letter', 'number'],
+]
+const bookSourceFields: BackupFieldRule[] = [
+  ['bookSourceUrl', 'string'],
+  ['bookSourceName', 'string'],
+]
+const rssSourceFields: BackupFieldRule[] = [
+  ['sourceUrl', 'string'],
+  ['sourceName', 'string'],
+]
+const bookFields: BackupFieldRule[] = [
+  ['name', 'string'],
+  ['author', 'string'],
+  ['bookUrl', 'string'],
+  ['tocUrl', 'string'],
+  ['origin', 'string'],
+  ['originName', 'string'],
+  ['type', 'number'],
+  ['group', 'number'],
+  ['latestChapterTime', 'number'],
+  ['lastCheckTime', 'number'],
+  ['lastCheckCount', 'number'],
+  ['totalChapterNum', 'number'],
+  ['durChapterIndex', 'number'],
+  ['durChapterPos', 'number'],
+  ['durChapterTime', 'number'],
+  ['canUpdate', 'boolean'],
+  ['order', 'number'],
+  ['originOrder', 'number'],
+  ['syncTime', 'number'],
+]
+const chapterFields: BackupFieldRule[] = [
+  ['id', 'string'],
+  ['url', 'string'],
+  ['title', 'string'],
+  ['isVolume', 'boolean'],
+  ['baseUrl', 'string'],
+  ['bookUrl', 'string'],
+  ['index', 'number'],
+  ['isVip', 'boolean'],
+  ['isPay', 'boolean'],
+  ['content', 'string'],
+]
+
+const isRecord = (value: unknown): value is BackupRecord =>
   typeof value === 'object' && value !== null && !Array.isArray(value)
 
-const ensureArray = (value: unknown, fieldName: string): unknown[] => {
-  if (!Array.isArray(value)) {
-    throw new Error(`备份数据 ${fieldName} 必须是数组`)
+const requireRecord = (value: unknown, path: string): BackupRecord => {
+  if (!isRecord(value)) {
+    throw new Error(`备份数据 ${path} 必须是对象`)
   }
   return value
 }
 
+const requireArray = (value: unknown, path: string): unknown[] => {
+  if (!Array.isArray(value)) {
+    throw new Error(`备份数据 ${path} 必须是数组`)
+  }
+  return value
+}
+
+const requireFields = (
+  record: BackupRecord,
+  path: string,
+  fields: BackupFieldRule[],
+) => {
+  for (const [field, type] of fields) {
+    if (typeof record[field] !== type) {
+      throw new Error(
+        `备份数据 ${path}.${field} 必须是${backupTypeLabel[type]}`,
+      )
+    }
+  }
+}
+
+const ensureTypedArray = <T>(
+  value: unknown,
+  path: string,
+  fields: BackupFieldRule[],
+): T[] => {
+  const items = requireArray(value, path)
+  items.forEach((item, index) => {
+    const itemPath = `${path}[${index}]`
+    requireFields(requireRecord(item, itemPath), itemPath, fields)
+  })
+  return items as T[]
+}
+
 const ensureReadConfig = (value: unknown): webReadConfig => {
-  if (!isRecord(value) || !isRecord(value.spacing)) {
-    throw new Error('备份数据 readConfig 结构不正确')
+  const config = requireRecord(value, 'readConfig')
+  const spacing = requireRecord(config.spacing, 'readConfig.spacing')
+  requireFields(config, 'readConfig', readConfigFields)
+  requireFields(spacing, 'readConfig.spacing', readConfigSpacingFields)
+  return config as webReadConfig
+}
+
+const ensureBookSources = (value: unknown): BookSoure[] =>
+  ensureTypedArray(value, 'bookSources', bookSourceFields)
+
+const ensureRssSources = (value: unknown): RssSource[] =>
+  ensureTypedArray(value, 'rssSources', rssSourceFields)
+
+const ensureBooks = (value: unknown): Book[] =>
+  ensureTypedArray(value, 'books', bookFields)
+
+const ensureChapters = (value: unknown): StandaloneBackupChapter[] =>
+  ensureTypedArray(value, 'chapters', chapterFields)
+
+const normalizeBookSources = (sources: BookSoure[]): BookSoure[] =>
+  sources.map((source, index) => ({
+    ...source,
+    bookSourceType: source.bookSourceType ?? 0,
+    customOrder: source.customOrder ?? index,
+    enabled: source.enabled ?? true,
+    enabledExplore: source.enabledExplore ?? false,
+    lastUpdateTime: source.lastUpdateTime ?? Date.now(),
+    respondTime: source.respondTime ?? 0,
+    weight: source.weight ?? 0,
+  }))
+
+const normalizeRssSources = (sources: RssSource[]): RssSource[] =>
+  sources.map((source, index) => ({
+    ...source,
+    sourceIcon: source.sourceIcon ?? '',
+    enabled: source.enabled ?? true,
+    singleUrl: source.singleUrl ?? true,
+    articleStyle: source.articleStyle ?? 0,
+    enableJs: source.enableJs ?? false,
+    loadWithBaseUrl: source.loadWithBaseUrl ?? false,
+    lastUpdateTime: source.lastUpdateTime ?? Date.now(),
+    customOrder: source.customOrder ?? index,
+  }))
+
+const normalizeBackupRelations = (
+  books: Book[],
+  chapters: StandaloneBackupChapter[],
+): { books: Book[]; chapters: StandaloneBackupChapter[] } => {
+  const bookUrls = new Set(books.map(book => book.bookUrl))
+  if (bookUrls.size !== books.length) {
+    throw new Error('备份数据 books 中存在重复 bookUrl')
   }
 
-  const spacing = value.spacing
-  const numberFields = [
-    'theme',
-    'font',
-    'fontSize',
-    'readWidth',
-    'jumpDuration',
-  ]
-  const spacingFields = ['paragraph', 'line', 'letter']
-  const hasInvalidNumber = numberFields.some(
-    field => typeof value[field] !== 'number',
-  )
-  const hasInvalidSpacing = spacingFields.some(
-    field => typeof spacing[field] !== 'number',
-  )
+  const chaptersByBook = new Map<string, StandaloneBackupChapter[]>()
+  const seenChapterKeys = new Set<string>()
+  const normalizedChapters = chapters.map(chapter => {
+    if (!bookUrls.has(chapter.bookUrl)) {
+      throw new Error(`备份章节 ${chapter.title} 对应的书籍不存在`)
+    }
+    if (!Number.isInteger(chapter.index) || chapter.index < 0) {
+      throw new Error(`备份章节 ${chapter.title} 的 index 必须是非负整数`)
+    }
+    const key = chapterId(chapter.bookUrl, chapter.index)
+    if (seenChapterKeys.has(key)) {
+      throw new Error(`备份章节重复：${key}`)
+    }
+    seenChapterKeys.add(key)
+    const normalizedChapter: StandaloneBackupChapter = {
+      ...chapter,
+      id: key,
+      url: `${chapter.bookUrl}/chapter/${chapter.index}`,
+      baseUrl: chapter.bookUrl,
+    }
+    const list = chaptersByBook.get(chapter.bookUrl) ?? []
+    list.push(normalizedChapter)
+    chaptersByBook.set(chapter.bookUrl, list)
+    return normalizedChapter
+  })
 
-  if (
-    hasInvalidNumber ||
-    hasInvalidSpacing ||
-    typeof value.infiniteLoading !== 'boolean' ||
-    typeof value.customFontName !== 'string'
-  ) {
-    throw new Error('备份数据 readConfig 字段类型不正确')
-  }
-
-  return value as webReadConfig
-}
-
-const ensureBookSources = (sources: unknown[]): BookSoure[] => {
-  sources.forEach((source, index) => {
-    if (
-      !isRecord(source) ||
-      typeof source.bookSourceUrl !== 'string' ||
-      typeof source.bookSourceName !== 'string'
-    ) {
-      throw new Error(`备份数据 bookSources[${index}] 结构不正确`)
+  const normalizedBooks = books.map(book => {
+    const bookChapters = (chaptersByBook.get(book.bookUrl) ?? []).sort(
+      (a, b) => a.index - b.index,
+    )
+    if (bookChapters.length === 0) {
+      throw new Error(`备份书籍《${book.name}》没有章节数据`)
+    }
+    bookChapters.forEach((chapter, index) => {
+      if (chapter.index !== index) {
+        throw new Error(`备份书籍《${book.name}》章节索引必须从 0 开始连续递增`)
+      }
+    })
+    const durChapterIndex = Math.min(
+      Math.max(0, Math.trunc(book.durChapterIndex || 0)),
+      bookChapters.length - 1,
+    )
+    return {
+      ...book,
+      totalChapterNum: bookChapters.length,
+      durChapterIndex,
+      durChapterTitle:
+        book.durChapterTitle ?? bookChapters[durChapterIndex].title,
+      latestChapterTitle:
+        book.latestChapterTitle ?? bookChapters[bookChapters.length - 1].title,
     }
   })
-  return sources as BookSoure[]
-}
 
-const ensureRssSources = (sources: unknown[]): RssSource[] => {
-  sources.forEach((source, index) => {
-    if (
-      !isRecord(source) ||
-      typeof source.sourceUrl !== 'string' ||
-      typeof source.sourceName !== 'string'
-    ) {
-      throw new Error(`备份数据 rssSources[${index}] 结构不正确`)
-    }
-  })
-  return sources as RssSource[]
-}
-
-const ensureBooks = (books: unknown[]): Book[] => {
-  books.forEach((book, index) => {
-    if (
-      !isRecord(book) ||
-      typeof book.bookUrl !== 'string' ||
-      typeof book.name !== 'string' ||
-      typeof book.author !== 'string'
-    ) {
-      throw new Error(`备份数据 books[${index}] 结构不正确`)
-    }
-  })
-  return books as Book[]
-}
-
-const ensureChapters = (chapters: unknown[]): StandaloneBackupChapter[] => {
-  chapters.forEach((chapter, index) => {
-    if (
-      !isRecord(chapter) ||
-      typeof chapter.id !== 'string' ||
-      typeof chapter.bookUrl !== 'string' ||
-      typeof chapter.index !== 'number' ||
-      typeof chapter.content !== 'string'
-    ) {
-      throw new Error(`备份数据 chapters[${index}] 结构不正确`)
-    }
-  })
-  return chapters as StandaloneBackupChapter[]
+  return { books: normalizedBooks, chapters: normalizedChapters }
 }
 
 const parseStandaloneBackupData = (data: unknown): StandaloneBackupData => {
@@ -345,14 +502,12 @@ const parseStandaloneBackupData = (data: unknown): StandaloneBackupData => {
   }
 
   const readConfig = ensureReadConfig(data.readConfig)
-  const bookSources = ensureBookSources(
-    ensureArray(data.bookSources, 'bookSources'),
+  const bookSources = normalizeBookSources(ensureBookSources(data.bookSources))
+  const rssSources = normalizeRssSources(ensureRssSources(data.rssSources))
+  const { books, chapters } = normalizeBackupRelations(
+    ensureBooks(data.books),
+    ensureChapters(data.chapters),
   )
-  const rssSources = ensureRssSources(
-    ensureArray(data.rssSources, 'rssSources'),
-  )
-  const books = ensureBooks(ensureArray(data.books, 'books'))
-  const chapters = ensureChapters(ensureArray(data.chapters, 'chapters'))
 
   return {
     version: STANDALONE_BACKUP_VERSION,
@@ -369,23 +524,55 @@ const replaceIndexedData = (
   books: Book[],
   chapters: StandaloneBackupChapter[],
 ) =>
-  transaction([BOOK_STORE, CHAPTER_STORE], 'readwrite', tx => {
+  transaction([BOOK_STORE, CHAPTER_STORE], 'readwrite', async tx => {
     const bookStore = tx.objectStore(BOOK_STORE)
     const chapterStore = tx.objectStore(CHAPTER_STORE)
-    bookStore.clear()
-    chapterStore.clear()
-    books.forEach(book => bookStore.put(book))
-    chapters.forEach(chapter => chapterStore.put(chapter))
+    await clearStores([bookStore, chapterStore])
+    await Promise.all([
+      putRecords(bookStore, books),
+      putRecords(chapterStore, chapters),
+    ])
   })
 
 const clearIndexedData = () =>
-  transaction([BOOK_STORE, CHAPTER_STORE], 'readwrite', tx => {
-    tx.objectStore(BOOK_STORE).clear()
-    tx.objectStore(CHAPTER_STORE).clear()
-  })
+  transaction([BOOK_STORE, CHAPTER_STORE], 'readwrite', tx =>
+    clearStores([tx.objectStore(BOOK_STORE), tx.objectStore(CHAPTER_STORE)]),
+  )
 
-const sourceStorageKey = () =>
-  /bookSource/i.test(location.href) ? BOOK_SOURCE_KEY : RSS_SOURCE_KEY
+const snapshotLocalStorage = () => ({
+  config: localStorage.getItem(CONFIG_KEY),
+  bookSources: localStorage.getItem(BOOK_SOURCE_KEY),
+  rssSources: localStorage.getItem(RSS_SOURCE_KEY),
+})
+
+const restoreLocalStorage = (
+  snapshot: ReturnType<typeof snapshotLocalStorage>,
+) => {
+  const entries = [
+    [CONFIG_KEY, snapshot.config],
+    [BOOK_SOURCE_KEY, snapshot.bookSources],
+    [RSS_SOURCE_KEY, snapshot.rssSources],
+  ] as const
+  entries.forEach(([key, value]) => {
+    if (value === null) localStorage.removeItem(key)
+    else localStorage.setItem(key, value)
+  })
+}
+
+const writeStandaloneLocalData = (backup: StandaloneBackupData) => {
+  writeJson(CONFIG_KEY, backup.readConfig)
+  writeJson(BOOK_SOURCE_KEY, backup.bookSources)
+  writeJson(RSS_SOURCE_KEY, backup.rssSources)
+}
+
+const clearStandaloneLocalData = () => {
+  removeJson(CONFIG_KEY)
+  writeJson(BOOK_SOURCE_KEY, [])
+  writeJson(RSS_SOURCE_KEY, [])
+}
+
+const sourceStorageKey = (kind: SourceKind) =>
+  isBookSourceKind(kind) ? BOOK_SOURCE_KEY : RSS_SOURCE_KEY
 
 const isBookSource = (source: Source): source is BookSoure =>
   'bookSourceUrl' in source
@@ -393,8 +580,8 @@ const isBookSource = (source: Source): source is BookSoure =>
 const sourceUniqueKey = (source: Source) =>
   isBookSource(source) ? source.bookSourceUrl : (source as RssSource).sourceUrl
 
-const defaultSourceList = (): Source[] =>
-  /bookSource/i.test(location.href)
+const defaultSourceList = (kind: SourceKind): Source[] =>
+  isBookSourceKind(kind)
     ? [
         {
           bookSourceUrl: 'https://example.com',
@@ -441,8 +628,8 @@ const defaultSourceList = (): Source[] =>
         } as RssSource,
       ]
 
-const readSources = () => {
-  const key = sourceStorageKey()
+const readSources = (kind: SourceKind = getCurrentSourceKind()) => {
+  const key = sourceStorageKey(kind)
   const raw = localStorage.getItem(key)
   if (raw !== null) {
     try {
@@ -452,13 +639,13 @@ const readSources = () => {
     localStorage.removeItem(key)
   }
 
-  const initialSources = defaultSourceList()
+  const initialSources = defaultSourceList(kind)
   writeJson(key, initialSources)
   return initialSources
 }
 
-const writeSources = (sources: Source[]) =>
-  writeJson(sourceStorageKey(), sources)
+const writeSources = (sources: Source[], kind: SourceKind) =>
+  writeJson(sourceStorageKey(kind), sources)
 
 const normalizeText = (text: string) =>
   text
@@ -664,8 +851,9 @@ const saveBookProgress = async (
   if (book === undefined) return ok('没有需要保存的本地进度')
 
   await readwriteStore(BOOK_STORE, async store => {
-    store.put({ ...book, ...bookProgress, syncTime: Date.now() })
-    return undefined
+    await requestToPromise(
+      store.put({ ...book, ...bookProgress, syncTime: Date.now() }),
+    )
   })
   return ok('阅读进度已保存到浏览器')
 }
@@ -679,9 +867,7 @@ const getBookShelf = async (): ApiResult<Book[]> => {
 const getChapterList = async (bookUrl: string): ApiResult<BookChapter[]> => {
   const chapters = await getChapterRecords(bookUrl)
   if (chapters.length === 0) return fail('这本书还没有章节，请重新导入')
-  return ok(
-    chapters.map(({ content: _content, id: _id, ...chapter }) => chapter),
-  )
+  return ok(chapters.map(toBookChapter))
 }
 
 const getBookContent = async (
@@ -721,8 +907,10 @@ const deleteBook = async (book: BaseBook): ApiResult<string> => {
   await transaction([BOOK_STORE, CHAPTER_STORE], 'readwrite', async tx => {
     const bookStore = tx.objectStore(BOOK_STORE)
     const chapterStore = tx.objectStore(CHAPTER_STORE)
-    bookStore.delete(book.bookUrl)
-    await deleteChapterRecords(chapterStore, book.bookUrl)
+    await Promise.all([
+      requestToPromise(bookStore.delete(book.bookUrl)),
+      deleteChapterRecords(chapterStore, book.bookUrl),
+    ])
   })
   return ok('书籍已从浏览器删除')
 }
@@ -746,24 +934,40 @@ const importLocalTextBook = async (file: File): ApiResult<Book> => {
   return ok(book)
 }
 
-const getSources = async (): ApiResult<Source[]> => ok(readSources())
+const getSources = async (
+  kind: SourceKind = getCurrentSourceKind(),
+): ApiResult<Source[]> => ok(readSources(kind))
 
-const saveSource = async (source: Source): ApiResult<string> => {
-  const map = new Map(readSources().map(item => [sourceUniqueKey(item), item]))
+const saveSource = async (
+  source: Source,
+  kind: SourceKind = getCurrentSourceKind(),
+): ApiResult<string> => {
+  const map = new Map(
+    readSources(kind).map(item => [sourceUniqueKey(item), item]),
+  )
   map.set(sourceUniqueKey(source), source)
-  writeSources(Array.from(map.values()))
+  writeSources(Array.from(map.values()), kind)
   return ok('源已保存到浏览器')
 }
 
-const saveSources = async (sources: Source[]): ApiResult<Source[]> => {
-  writeSources(sources)
+const saveSources = async (
+  sources: Source[],
+  kind: SourceKind = getCurrentSourceKind(),
+): ApiResult<Source[]> => {
+  writeSources(sources, kind)
   return ok(sources)
 }
 
-const deleteSource = async (sources: Source[]): ApiResult<string> => {
+const deleteSource = async (
+  sources: Source[],
+  kind: SourceKind = getCurrentSourceKind(),
+): ApiResult<string> => {
   const deleteKeys = new Set(sources.map(sourceUniqueKey))
   writeSources(
-    readSources().filter(source => !deleteKeys.has(sourceUniqueKey(source))),
+    readSources(kind).filter(
+      source => !deleteKeys.has(sourceUniqueKey(source)),
+    ),
+    kind,
   )
   return ok('源已从浏览器删除')
 }
@@ -773,7 +977,9 @@ const debug = (
   searchKey: string,
   onReceive: (data: string) => void,
   onFinish: () => void,
+  kind: SourceKind = getCurrentSourceKind(),
 ) => {
+  void kind
   const messages = [
     '纯 Web 模式已接管源编辑器，不再依赖阅读 App。',
     `当前源：${sourceUrl || '未填写'}`,
@@ -786,11 +992,24 @@ const debug = (
   window.setTimeout(onFinish, messages.length * 80)
 }
 
+const getStandaloneSnapshot = () =>
+  transaction([BOOK_STORE, CHAPTER_STORE], 'readonly', async tx => {
+    const [books, chapters] = await Promise.all([
+      requestToPromise(
+        tx.objectStore(BOOK_STORE).getAll() as IDBRequest<Book[]>,
+      ),
+      requestToPromise(
+        tx.objectStore(CHAPTER_STORE).getAll() as IDBRequest<ChapterRecord[]>,
+      ),
+    ])
+    chapters.sort(
+      (a, b) => a.bookUrl.localeCompare(b.bookUrl) || a.index - b.index,
+    )
+    return { books, chapters }
+  })
+
 const exportStandaloneData = async (): ApiResult<StandaloneBackupData> => {
-  const [books, chapters] = await Promise.all([
-    getAllBooks(),
-    getAllChapterRecords(),
-  ])
+  const { books, chapters } = await getStandaloneSnapshot()
 
   return ok({
     version: STANDALONE_BACKUP_VERSION,
@@ -808,22 +1027,45 @@ const importStandaloneData = async (
 ): ApiResult<string> => {
   try {
     const backup = parseStandaloneBackupData(data)
-    await replaceIndexedData(backup.books, backup.chapters)
-    writeJson(CONFIG_KEY, backup.readConfig)
-    writeJson(BOOK_SOURCE_KEY, backup.bookSources)
-    writeJson(RSS_SOURCE_KEY, backup.rssSources)
-    return ok('浏览器本地数据已从备份导入')
+    const localSnapshot = snapshotLocalStorage()
+    const indexedSnapshot = await getStandaloneSnapshot()
+
+    try {
+      await replaceIndexedData(backup.books, backup.chapters)
+      writeStandaloneLocalData(backup)
+      return ok('浏览器本地数据已从备份导入')
+    } catch (error) {
+      restoreLocalStorage(localSnapshot)
+      await replaceIndexedData(
+        indexedSnapshot.books,
+        indexedSnapshot.chapters,
+      ).catch(() => undefined)
+      throw error
+    }
   } catch (error) {
     return fail(error instanceof Error ? error.message : '导入备份失败')
   }
 }
 
 const clearStandaloneData = async (): ApiResult<string> => {
-  await clearIndexedData()
-  removeJson(CONFIG_KEY)
-  removeJson(BOOK_SOURCE_KEY)
-  removeJson(RSS_SOURCE_KEY)
-  return ok('浏览器本地数据已清空')
+  const localSnapshot = snapshotLocalStorage()
+  try {
+    const indexedSnapshot = await getStandaloneSnapshot()
+    try {
+      await clearIndexedData()
+      clearStandaloneLocalData()
+      return ok('浏览器本地数据已清空')
+    } catch (error) {
+      restoreLocalStorage(localSnapshot)
+      await replaceIndexedData(
+        indexedSnapshot.books,
+        indexedSnapshot.chapters,
+      ).catch(() => undefined)
+      throw error
+    }
+  } catch (error) {
+    return fail(error instanceof Error ? error.message : '清空本地数据失败')
+  }
 }
 
 const getProxyCoverUrl = (coverUrl: string) => {
@@ -838,10 +1080,14 @@ const getProxyCoverUrl = (coverUrl: string) => {
 }
 
 const getProxyImageUrl = (
-  _bookUrl: string,
+  bookUrl: string,
   src: string,
-  _width?: number | `${number}`,
-) => src
+  width?: number | `${number}`,
+) => {
+  void bookUrl
+  void width
+  return src
+}
 
 export default {
   getReadConfig,

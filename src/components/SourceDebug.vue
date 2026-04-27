@@ -21,8 +21,10 @@
 <script setup lang="ts">
 import API from '@api'
 import { Search } from '@element-plus/icons-vue'
+import { isBookSourceKind, sourceKindFromPath } from '@/utils/sourceKind'
 
 const store = useSourceStore()
+const route = useRoute()
 
 const printDebug = ref('')
 const searchKey = ref('')
@@ -42,7 +44,7 @@ const appendDebugMsg = (msg: string) => {
 const startDebug = async () => {
   printDebug.value = ''
   try {
-    await API.saveSource(store.currentSource)
+    await API.saveSource(store.currentSource, sourceKind.value)
   } catch (e) {
     store.debugFinish()
     throw e
@@ -52,12 +54,12 @@ const startDebug = async () => {
     searchKey.value || store.searchKey,
     appendDebugMsg,
     store.debugFinish,
+    sourceKind.value,
   )
 }
 
-const isBookSource = computed(() => {
-  return /bookSource/i.test(window.location.href)
-})
+const sourceKind = computed(() => sourceKindFromPath(route.fullPath))
+const isBookSource = computed(() => isBookSourceKind(sourceKind.value))
 </script>
 
 <style lang="scss" scoped>

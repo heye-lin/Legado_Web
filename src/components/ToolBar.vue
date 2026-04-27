@@ -65,37 +65,36 @@
 </template>
 
 <script setup lang="ts">
-import API, { apiTargetName, isStandaloneMode } from '@api'
+import API, { apiTargetName } from '@api'
 import { CircleCheckFilled, Edit } from '@element-plus/icons-vue'
 import hotkeys from 'hotkeys-js'
+import { getErrorMessage, selectJsonFile } from '@utils/jsonFile'
 import { getSourceName, isInvaildSource, normalizeSource } from '../utils/souce'
-import type { Source } from '@/source'
+import {
+  downloadSourceConfig,
+  persistSourceConfig,
+  readSourceConfigFile,
+} from '@/utils/sourceFile'
+import { getCurrentSourceKind, sourceKindDisplayName } from '@/utils/sourceKind'
 
 const store = useSourceStore()
-const sourceFileKind = /bookSource/i.test(location.href)
-  ? 'bookSource'
-  : 'rssSource'
-const sourceDisplayName = sourceFileKind === 'bookSource' ? '书源' : '订阅源'
-const sourceRequiredFields =
-  sourceFileKind === 'bookSource'
-    ? 'bookSourceUrl、bookSourceName'
-    : 'sourceUrl、sourceName'
-
+const sourceDisplayName = () => sourceKindDisplayName(getCurrentSourceKind())
 type ToolButton = { name: string; hotKeys: string[]; action: () => void }
 
 const pull = () => {
+  const kind = getCurrentSourceKind()
   const loadingMsg = ElMessage({
     message: '加载中……',
     showClose: true,
     duration: 0,
   })
-  API.getSources()
+  API.getSources(kind)
     .then(({ data }) => {
       if (data.isSuccess) {
-        store.changeTabName('editList')
-        store.saveSources(data.data)
+        store.saveSources(data.data, kind)
+        if (store.currentSourceKind === kind) store.changeTabName('editList')
         ElMessage({
-          message: `成功拉取${data.data.length}条源`,
+          message: `成功拉取${data.data.length}条${sourceKindDisplayName(kind)}`,
           type: 'success',
         })
       } else {
@@ -109,6 +108,7 @@ const pull = () => {
 }
 
 const push = () => {
+  const kind = getCurrentSourceKind()
   const sources = store.sources
   store.changeTabName('editList')
   if (sources.length === 0) {
@@ -121,7 +121,7 @@ const push = () => {
     message: '正在推送中',
     type: 'info',
   })
-  API.saveSources(sources).then(({ data }) => {
+  API.saveSources(sources, kind).then(({ data }) => {
     if (data.isSuccess) {
       const okData = data.data
       if (Array.isArray(okData)) {
@@ -178,10 +178,11 @@ const redo = () => {
 }
 
 const saveSource = () => {
+  const kind = getCurrentSourceKind()
   const source = store.currentSource
   if (isInvaildSource(source)) {
     normalizeSource(source)
-    API.saveSource(source).then(({ data }) => {
+    API.saveSource(source, kind).then(({ data }) => {
       const sourceName = getSourceName(source)
       if (data.isSuccess) {
         ElMessage({
@@ -209,102 +210,37 @@ const debug = () => {
   store.startDebug()
 }
 
-const padDatePart = (value: number) => value.toString().padStart(2, '0')
-
-const formatFileDate = (date: Date) => {
-  const year = date.getFullYear()
-  const month = padDatePart(date.getMonth() + 1)
-  const day = padDatePart(date.getDate())
-  const hours = padDatePart(date.getHours())
-  const minutes = padDatePart(date.getMinutes())
-  const seconds = padDatePart(date.getSeconds())
-  return `${year}${month}${day}_${hours}${minutes}${seconds}`
-}
-
 const exportSources = () => {
   const sources = store.sources
   if (sources.length === 0) {
-    ElMessage({ message: `当前没有可导出的${sourceDisplayName}`, type: 'info' })
+    ElMessage({
+      message: `当前没有可导出的${sourceDisplayName()}`,
+      type: 'info',
+    })
     return
   }
 
-  const blobUrl = URL.createObjectURL(
-    new Blob([JSON.stringify(sources, null, 2)], {
-      type: 'application/json;charset=utf-8',
-    }),
-  )
-  const link = document.createElement('a')
-  link.href = blobUrl
-  link.download = `${sourceFileKind}_${formatFileDate(new Date())}.json`
-  link.click()
-  window.setTimeout(() => URL.revokeObjectURL(blobUrl), 0)
+  downloadSourceConfig(sources, getCurrentSourceKind())
   ElMessage({
-    message: `已导出 ${sources.length} 条${sourceDisplayName}`,
+    message: `已导出 ${sources.length} 条${sourceDisplayName()}`,
     type: 'success',
   })
 }
 
-const getErrorMessage = (error: unknown) =>
-  error instanceof Error ? error.message : String(error)
-
-const isObject = (value: unknown): value is Record<string, unknown> =>
-  typeof value === 'object' && value !== null && !Array.isArray(value)
-
-const isExpectedSource = (value: unknown) => {
-  if (!isObject(value)) return false
-  return sourceFileKind === 'bookSource'
-    ? typeof value.bookSourceUrl === 'string' &&
-        typeof value.bookSourceName === 'string'
-    : typeof value.sourceUrl === 'string' &&
-        typeof value.sourceName === 'string'
-}
-
-const parseSources = (content: string): Source[] => {
-  let data: unknown
-  try {
-    data = JSON.parse(content)
-  } catch (error) {
-    throw new Error(`JSON 解析失败：${getErrorMessage(error)}`)
-  }
-
-  if (!Array.isArray(data)) {
-    throw new Error('文件内容必须是 Source[] 数组')
-  }
-
-  const invalidIndex = data.findIndex(source => !isExpectedSource(source))
-  if (invalidIndex !== -1) {
-    throw new Error(
-      `第 ${invalidIndex + 1} 条不是有效${sourceDisplayName}，需要字段：${sourceRequiredFields}`,
-    )
-  }
-
-  return data as Source[]
-}
-
 const importSourcesFromFile = async (file: File) => {
-  let content: string
-  try {
-    content = await file.text()
-  } catch (error) {
-    throw new Error(`读取文件失败：${getErrorMessage(error)}`)
-  }
-
-  const sources = parseSources(content)
-  store.saveSources(sources)
-  if (isStandaloneMode) await API.saveSources(sources)
-  store.changeTabName('editList')
+  const kind = getCurrentSourceKind()
+  const sources = await readSourceConfigFile(file, kind)
+  await persistSourceConfig(sources, kind)
+  store.saveSources(sources, kind)
+  if (store.currentSourceKind === kind) store.changeTabName('editList')
   ElMessage({
-    message: `已导入 ${sources.length} 条${sourceDisplayName}`,
+    message: `已导入 ${sources.length} 条${sourceKindDisplayName(kind)}`,
     type: 'success',
   })
 }
 
 const importSources = () => {
-  const input = document.createElement('input')
-  input.type = 'file'
-  input.accept = 'application/json,.json'
-  input.addEventListener('change', async () => {
-    const file = input.files?.[0]
+  selectJsonFile(async file => {
     if (file === undefined) {
       ElMessage({ message: '未选择源配置 JSON 文件', type: 'info' })
       return
@@ -319,7 +255,6 @@ const importSources = () => {
       })
     }
   })
-  input.click()
 }
 
 const buttons = ref<ToolButton[]>(

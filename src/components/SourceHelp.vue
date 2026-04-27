@@ -3,7 +3,7 @@ import { Link } from '@element-plus/icons-vue'
 </script>
 <template>
   <el-link :icon="Link" href="/help/#appHelp" target="_blank"
-    >APP帮助文档</el-link
+    >Legado 规则帮助</el-link
   ><br />
   <el-link :icon="Link" href="/help/#ruleHelp" target="_blank"
     >书源制作教程</el-link
