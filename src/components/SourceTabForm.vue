@@ -69,11 +69,8 @@ import type { SourceConfig } from '@/config/sourceConfig'
 const store = useSourceStore()
 defineProps<{ config: SourceConfig }>()
 
-const currentSource = computed(() => store.currentSource)
-/* 
-修改currentSource的属性 没有直接修改本身
-const { currentSource } = storeToRefs(store);
- */
+type SourceFormModel = Record<string, any> // eslint-disable-line @typescript-eslint/no-explicit-any
+const currentSource = computed(() => store.currentSource as SourceFormModel)
 </script>
 
 <style lang="scss" scoped>

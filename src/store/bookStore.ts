@@ -5,42 +5,32 @@ import type {
   Book,
   BookChapter,
   BookProgress,
-  SeachBook,
+  SearchBook,
 } from '@/book'
 import type { webReadConfig } from '@/web'
+import {
+  createDefaultReadConfig,
+  normalizeReadConfig,
+} from '@/config/readConfig'
 import { ElMessage } from 'element-plus/es'
 
-const default_config: webReadConfig = {
-  theme: 0,
-  font: 0,
-  fontSize: 18,
-  readWidth: 800,
-  infiniteLoading: false,
-  customFontName: '',
-  jumpDuration: 1000,
-  spacing: {
-    paragraph: 1,
-    line: 0.8,
-    letter: 0,
-  },
-}
 let webReadConfigLoadedDate: Date | undefined
 
 export const useBookStore = defineStore('book', {
   state: () => {
     return {
-      searchBooks: [] as SeachBook[],
+      searchBooks: [] as SearchBook[],
       shelf: [] as Book[],
       catalog: [] as BookChapter[],
       readingBook: { chapterPos: 0, chapterIndex: 0 } as BaseBook & {
         chapterPos: number
         chapterIndex: number
-        isSeachBook?: boolean
+        isSearchBook?: boolean
       },
       popCataVisible: false,
       contentLoading: true,
       showContent: false,
-      config: default_config,
+      config: createDefaultReadConfig(),
       miniInterface: false,
       readSettingsVisible: false,
     }
@@ -168,7 +158,7 @@ export const useBookStore = defineStore('book', {
       )
     },
     setConfig(config?: webReadConfig) {
-      this.config = Object.assign({}, this.config, config)
+      this.config = normalizeReadConfig(config)
     },
     setReadSettingsVisible(visible: boolean) {
       this.readSettingsVisible = visible
@@ -179,12 +169,12 @@ export const useBookStore = defineStore('book', {
     setMiniInterface(mini: boolean) {
       this.miniInterface = mini
     },
-    async setSearchBooks(books: SeachBook[]) {
+    async setSearchBooks(books: SearchBook[]) {
       books.forEach(book => {
-        const isSeachBook = this.shelf.every(
+        const isNotOnShelf = this.shelf.every(
           item => item.bookUrl !== book.bookUrl,
         )
-        if (isSeachBook === true) {
+        if (isNotOnShelf === true) {
           this.searchBooks.push(book)
         }
       })

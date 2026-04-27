@@ -85,7 +85,6 @@
           v-for="data in chapterData"
           :key="data.index"
           :chapterIndex="data.index"
-          ref="chapter"
         >
           <chapter-content
             ref="chapterRef"
@@ -95,7 +94,7 @@
             :spacing="store.config.spacing"
             :fontSize="fontSize"
             :fontFamily="fontFamily"
-            @readedLengthChange="onReadedLengthChange"
+            @readLengthChange="onReadLengthChange"
             v-if="showContent"
           />
         </div>
@@ -138,9 +137,9 @@ const chapterIndex = computed({
   get: () => store.readingBook.chapterIndex,
   set: value => (store.readingBook.chapterIndex = value),
 })
-const isSeachBook = computed({
-  get: () => store.readingBook.isSeachBook,
-  set: value => (store.readingBook.isSeachBook = value),
+const isSearchBook = computed({
+  get: () => store.readingBook.isSearchBook,
+  set: value => (store.readingBook.isSearchBook = value),
 })
 
 // 当前阅读书籍readingBook持久化
@@ -170,7 +169,9 @@ watchEffect(() => {
   }
 })
 const loadMore = () => {
-  const index = chapterData.value.slice(-1)[0].index
+  const latestChapter = chapterData.value[chapterData.value.length - 1]
+  if (latestChapter === undefined) return
+  const index = latestChapter.index
   if (catalog.value.length - 1 > index) {
     getContent(index + 1, false)
     store.saveBookProgress() // 保存的是上一章的进度，不是预载的本章进度
@@ -286,7 +287,21 @@ const chapterData = ref<{ index: number; content: string[]; title: string }[]>(
   [],
 )
 const noPoint = ref(true)
+const normalizeReadingNumber = (value: string | number | null) => {
+  const number = Number(value ?? 0)
+  return Number.isFinite(number) && number >= 0 ? Math.floor(number) : 0
+}
+const clampChapterIndex = (index: number, chapterCount: number) => {
+  if (chapterCount <= 0) return 0
+  return Math.min(normalizeReadingNumber(index), chapterCount - 1)
+}
 const getContent = (index: number, reloadChapter = true, chapterPos = 0) => {
+  const chapter = Number.isInteger(index) ? catalog.value[index] : undefined
+  if (chapter === undefined) {
+    ElMessage.error('章节不存在或已被删除')
+    return
+  }
+
   if (reloadChapter) {
     //展示进度条
     store.setShowContent(false)
@@ -297,7 +312,7 @@ const getContent = (index: number, reloadChapter = true, chapterPos = 0) => {
     chapterData.value = []
   }
   const bookUrl = store.readingBook.bookUrl
-  const { title, index: chapterIndex } = catalog.value[index]
+  const { title, index: chapterIndex } = chapter
 
   loadingWrapper(
     API.getBookContent(bookUrl, chapterIndex).then(
@@ -330,12 +345,13 @@ const getContent = (index: number, reloadChapter = true, chapterPos = 0) => {
 }
 
 // 章节进度跳转和计算
-const chapter = ref()
 const chapterRef = ref()
 const toChapterPos = (pos: number) => {
   nextTick(() => {
-    if (chapterRef.value.length === 1)
-      chapterRef.value[0].scrollToReadedLength(pos)
+    const refs = chapterRef.value
+    if (Array.isArray(refs) && refs.length === 1) {
+      refs[0].scrollToReadLength(pos)
+    }
   })
 }
 
@@ -345,7 +361,7 @@ const saveBookProgressThrottle = useThrottleFn(
   60000,
 )
 
-const onReadedLengthChange = (index: number, pos: number) => {
+const onReadLengthChange = (index: number, pos: number) => {
   saveReadingBookProgressToBrowser(index, pos)
   saveBookProgressThrottle()
 }
@@ -476,9 +492,15 @@ onMounted(async () => {
   const bookUrl = sessionStorage.getItem('bookUrl')
   const name = sessionStorage.getItem('bookName')
   const author = sessionStorage.getItem('bookAuthor')
-  const chapterIndex = Number(sessionStorage.getItem('chapterIndex') || 0)
-  const chapterPos = Number(sessionStorage.getItem('chapterPos') || 0)
-  const isSeachBook = sessionStorage.getItem('isSeachBook') === 'true'
+  const initialChapterIndex = normalizeReadingNumber(
+    sessionStorage.getItem('chapterIndex'),
+  )
+  const initialChapterPos = normalizeReadingNumber(
+    sessionStorage.getItem('chapterPos'),
+  )
+  const isSearchBook =
+    sessionStorage.getItem('isSearchBook') === 'true' ||
+    sessionStorage.getItem('isSeachBook') === 'true'
   if (isNullOrBlank(bookUrl) || isNullOrBlank(name) || author === null) {
     ElMessage.warning('书籍信息为空，即将自动返回书架页面...')
     return setTimeout(toShelf, 500)
@@ -489,29 +511,47 @@ onMounted(async () => {
     // @ts-expect-error: bookUrl name author is NON_Blank string here
     name,
     author,
-    chapterIndex,
-    chapterPos,
-    isSeachBook,
+    chapterIndex: initialChapterIndex,
+    chapterPos: initialChapterPos,
+    isSearchBook,
   }
   onResize()
   window.addEventListener('resize', onResize)
   loadingWrapper(
-    store.loadWebCatalog(book).then(chapters => {
-      store.setReadingBook(book)
-      getContent(chapterIndex, true, chapterPos)
-      window.addEventListener('keyup', handleKeyPress)
-      window.addEventListener('keydown', ignoreKeyPress)
-      // 兼容Safari < 14
-      document.addEventListener('visibilitychange', onVisibilityChange)
-      //监听底部加载
-      scrollObserver = new IntersectionObserver(onReachBottom, {
-        rootMargin: '-100% 0% 20% 0%',
+    store
+      .loadWebCatalog(book)
+      .then(chapters => {
+        if (chapters.length === 0) {
+          ElMessage.warning('书籍目录为空，即将自动返回书架页面...')
+          setTimeout(toShelf, 500)
+          return
+        }
+
+        book.chapterIndex = clampChapterIndex(
+          book.chapterIndex,
+          chapters.length,
+        )
+        book.chapterPos = normalizeReadingNumber(book.chapterPos)
+        store.setReadingBook(book)
+        getContent(book.chapterIndex, true, book.chapterPos)
+        window.addEventListener('keyup', handleKeyPress)
+        window.addEventListener('keydown', ignoreKeyPress)
+        // 兼容Safari < 14
+        document.addEventListener('visibilitychange', onVisibilityChange)
+        //监听底部加载
+        scrollObserver = new IntersectionObserver(onReachBottom, {
+          rootMargin: '-100% 0% 20% 0%',
+        })
+        if (infiniteLoading.value === true) {
+          scrollObserver.observe(loading.value)
+        }
+        //第二次点击同一本书 页面标题不会变化
+        document.title = '...'
+        document.title = `${name as string} | ${chapters[book.chapterIndex].title}`
       })
-      if (infiniteLoading.value === true) scrollObserver.observe(loading.value)
-      //第二次点击同一本书 页面标题不会变化
-      document.title = '...'
-      document.title = (name as string) + ' | ' + chapters[chapterIndex].title
-    }),
+      .catch(() => {
+        setTimeout(toShelf, 500)
+      }),
   )
 })
 
@@ -530,7 +570,7 @@ onUnmounted(() => {
 const addToBookShelfConfirm = async () => {
   const book = store.readingBook
   // 阅读的是搜索的书籍 并未在书架
-  if (book.isSeachBook === true) {
+  if (book.isSearchBook === true) {
     await ElMessageBox.confirm(`是否将《${book.name}》放入书架？`, '放入书架', {
       confirmButtonText: '确认',
       cancelButtonText: '否',
@@ -544,13 +584,16 @@ const addToBookShelfConfirm = async () => {
     })
       .then(() => {
         //选择是，无动作
-        isSeachBook.value = false
+        isSearchBook.value = false
       })
       .catch(async () => {
         //选择否，删除书籍
         await API.deleteBook(book)
       })
-      .finally(() => sessionStorage.removeItem('isSeachBook'))
+      .finally(() => {
+        sessionStorage.removeItem('isSearchBook')
+        sessionStorage.removeItem('isSeachBook')
+      })
   }
 }
 onBeforeRouteLeave(async (to, from, next) => {
@@ -648,7 +691,8 @@ onBeforeRouteLeave(async (to, from, next) => {
   }
 
   .chapter {
-    font-family: 'Microsoft YaHei', PingFangSC-Regular, HelveticaNeue-Light,
+    font-family:
+      'Microsoft YaHei', PingFangSC-Regular, HelveticaNeue-Light,
       'Helvetica Neue Light', sans-serif;
     text-align: left;
     padding: 0 65px;
@@ -659,7 +703,8 @@ onBeforeRouteLeave(async (to, from, next) => {
     .content {
       font-size: 18px;
       line-height: 1.8;
-      font-family: 'Microsoft YaHei', PingFangSC-Regular, HelveticaNeue-Light,
+      font-family:
+        'Microsoft YaHei', PingFangSC-Regular, HelveticaNeue-Light,
         'Helvetica Neue Light', sans-serif;
 
       .bottom-bar,

@@ -1,5 +1,5 @@
 import type { AxiosResponse } from 'axios'
-import type { LeagdoApiResponse } from './api'
+import type { LegadoApiResponse } from './api'
 import API, {
   setWebsocketOnError,
   setApiEntryPoint,
@@ -12,31 +12,31 @@ import { validatorHttpUrl } from '@/utils/utils'
 
 import { useConnectionStore } from '@/store/connectionStore'
 
-const LeagdoApiResponseKeys: string[] = Array.of('isSuccess', 'errorMsg')
+const LegadoApiResponseKeys: string[] = Array.of('isSuccess', 'errorMsg')
 
 const notification = ElMessage
-/** Axios.Interceptor: check if resp is LeagaoLeagdoApiResponse*/
+/** Axios.Interceptor: check if resp is LegadoApiResponse*/
 const responseCheckInterceptor =
   (connectionStore: ReturnType<typeof useConnectionStore>) =>
   (resp: AxiosResponse) => {
-    let isLeagdoApiResponse = true
+    let isLegadoApiResponse = true
     try {
       const data = resp.data
 
-      for (const key of LeagdoApiResponseKeys) {
+      for (const key of LegadoApiResponseKeys) {
         if (!(key in data)) {
-          isLeagdoApiResponse = false
+          isLegadoApiResponse = false
         }
       }
-      if ((data as LeagdoApiResponse<unknown>).isSuccess === true) {
+      if ((data as LegadoApiResponse<unknown>).isSuccess === true) {
         if (!('data' in data)) {
-          isLeagdoApiResponse = false
+          isLegadoApiResponse = false
         }
       }
     } catch {
-      isLeagdoApiResponse = false
+      isLegadoApiResponse = false
     }
-    if (isLeagdoApiResponse === false) {
+    if (isLegadoApiResponse === false) {
       notification.warning({ message: '后端返回内容格式错误', grouping: true })
       throw new Error()
     }
@@ -82,9 +82,9 @@ export const initializeApiConnectionStatus = () => {
 }
 /**
  * 按照阅读的默认规则 解析阅读HTTP WebSocket API入口地址
- * @returns [http_url, webSocekt_url]
+ * @returns [http_url, webSocketUrl]
  */
-export const parseLeagdoHttpUrlWithDefault = (
+export const parseLegadoHttpUrlWithDefault = (
   http_url: string | URL,
 ): [string, string] => {
   let url = new URL(location.origin) //默认当前网址的origin部分
@@ -118,11 +118,9 @@ export const parseLeagdoHttpUrlWithDefault = (
   return [http_entry_point, webSocket_entry_point]
 }
 
-//export const useLeagdoRemoteUrlDialog = () => { }
-
 if (!isStandaloneMode) {
   setApiEntryPoint(
-    ...parseLeagdoHttpUrlWithDefault(ajax.defaults.baseURL as string),
+    ...parseLegadoHttpUrlWithDefault(ajax.defaults.baseURL as string),
   )
 }
 

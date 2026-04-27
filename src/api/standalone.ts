@@ -3,16 +3,19 @@ import type {
   Book,
   BookChapter,
   BookProgress,
-  SeachBook,
+  SearchBook,
 } from '@/book'
-import type { BookSoure, RssSource, Source } from '@/source'
+import type { BookSource, RssSource, Source } from '@/source'
 import type { webReadConfig } from '@/web'
+import { DEFAULT_READ_CONFIG, normalizeReadConfig } from '@/config/readConfig'
+import { getSourceUniqueKey } from '@/utils/source'
+import { parseSourcesForKind } from '@/utils/sourceImport'
 import {
   type SourceKind,
   getCurrentSourceKind,
   isBookSourceKind,
 } from '@/utils/sourceKind'
-import type { LeagdoApiResponse } from './api'
+import type { LegadoApiResponse } from './api'
 
 const DB_NAME = 'legado-web-standalone'
 const DB_VERSION = 1
@@ -25,22 +28,7 @@ const RSS_SOURCE_KEY = 'legado.standalone.rssSources'
 
 const STANDALONE_BACKUP_VERSION = 1
 
-const DEFAULT_CONFIG: webReadConfig = {
-  theme: 0,
-  font: 0,
-  fontSize: 18,
-  readWidth: 800,
-  infiniteLoading: false,
-  customFontName: '',
-  jumpDuration: 1000,
-  spacing: {
-    paragraph: 1,
-    line: 0.8,
-    letter: 0,
-  },
-}
-
-type ApiResult<T> = Promise<{ data: LeagdoApiResponse<T> }>
+type ApiResult<T> = Promise<{ data: LegadoApiResponse<T> }>
 export type StandaloneBackupChapter = BookChapter & {
   id: string
   content: string
@@ -51,7 +39,7 @@ export type StandaloneBackupData = {
   version: 1
   exportedAt: string
   readConfig: webReadConfig
-  bookSources: BookSoure[]
+  bookSources: BookSource[]
   rssSources: RssSource[]
   books: Book[]
   chapters: StandaloneBackupChapter[]
@@ -63,14 +51,14 @@ let dbPromise: Promise<IDBDatabase> | undefined
 
 const clone = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T
 
-const ok = <T>(data: T, errorMsg = ''): { data: LeagdoApiResponse<T> } => ({
+const ok = <T>(data: T, errorMsg = ''): { data: LegadoApiResponse<T> } => ({
   data: { isSuccess: true, errorMsg, data },
 })
 
 const fail = <T>(
   errorMsg: string,
   data: T = undefined as T,
-): { data: LeagdoApiResponse<T> } => ({
+): { data: LegadoApiResponse<T> } => ({
   data: { isSuccess: false, errorMsg, data },
 })
 
@@ -388,7 +376,7 @@ const ensureReadConfig = (value: unknown): webReadConfig => {
   return config as webReadConfig
 }
 
-const ensureBookSources = (value: unknown): BookSoure[] =>
+const ensureBookSources = (value: unknown): BookSource[] =>
   ensureTypedArray(value, 'bookSources', bookSourceFields)
 
 const ensureRssSources = (value: unknown): RssSource[] =>
@@ -400,7 +388,7 @@ const ensureBooks = (value: unknown): Book[] =>
 const ensureChapters = (value: unknown): StandaloneBackupChapter[] =>
   ensureTypedArray(value, 'chapters', chapterFields)
 
-const normalizeBookSources = (sources: BookSoure[]): BookSoure[] =>
+const normalizeBookSources = (sources: BookSource[]): BookSource[] =>
   sources.map((source, index) => ({
     ...source,
     bookSourceType: source.bookSourceType ?? 0,
@@ -501,7 +489,7 @@ const parseStandaloneBackupData = (data: unknown): StandaloneBackupData => {
     throw new Error('备份数据 exportedAt 必须是字符串')
   }
 
-  const readConfig = ensureReadConfig(data.readConfig)
+  const readConfig = normalizeReadConfig(ensureReadConfig(data.readConfig))
   const bookSources = normalizeBookSources(ensureBookSources(data.bookSources))
   const rssSources = normalizeRssSources(ensureRssSources(data.rssSources))
   const { books, chapters } = normalizeBackupRelations(
@@ -574,12 +562,6 @@ const clearStandaloneLocalData = () => {
 const sourceStorageKey = (kind: SourceKind) =>
   isBookSourceKind(kind) ? BOOK_SOURCE_KEY : RSS_SOURCE_KEY
 
-const isBookSource = (source: Source): source is BookSoure =>
-  'bookSourceUrl' in source
-
-const sourceUniqueKey = (source: Source) =>
-  isBookSource(source) ? source.bookSourceUrl : (source as RssSource).sourceUrl
-
 const defaultSourceList = (kind: SourceKind): Source[] =>
   isBookSourceKind(kind)
     ? [
@@ -608,7 +590,7 @@ const defaultSourceList = (kind: SourceKind): Source[] =>
           ruleExplore: {},
           bookSourceComment:
             '纯浏览器版会保存书源配置；跨站抓取受浏览器 CORS 限制，完整 Legado 规则引擎需要后续单独实现。',
-        } as BookSoure,
+        } as BookSource,
       ]
     : [
         {
@@ -633,10 +615,12 @@ const readSources = (kind: SourceKind = getCurrentSourceKind()) => {
   const raw = localStorage.getItem(key)
   if (raw !== null) {
     try {
-      const sources = JSON.parse(raw)
-      if (Array.isArray(sources)) return sources as Source[]
-    } catch {}
-    localStorage.removeItem(key)
+      const sources = parseSourcesForKind(JSON.parse(raw), kind)
+      writeJson(key, sources)
+      return sources
+    } catch {
+      localStorage.removeItem(key)
+    }
   }
 
   const initialSources = defaultSourceList(kind)
@@ -808,7 +792,7 @@ const placeholderCover = (label: string) => {
   return `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(svg)}`
 }
 
-const toSearchBook = (book: Book): SeachBook => ({
+const toSearchBook = (book: Book): SearchBook => ({
   name: book.name,
   author: book.author,
   bookUrl: book.bookUrl,
@@ -836,10 +820,10 @@ const sameBook = (book: BaseBook, progress: BookProgress) =>
     : book.name === progress.name && book.author === progress.author
 
 const getReadConfig = async (): Promise<webReadConfig | undefined> =>
-  readJson(CONFIG_KEY, DEFAULT_CONFIG)
+  normalizeReadConfig(readJson(CONFIG_KEY, DEFAULT_READ_CONFIG))
 
 const saveReadConfig = async (config: webReadConfig): ApiResult<string> => {
-  writeJson(CONFIG_KEY, config)
+  writeJson(CONFIG_KEY, normalizeReadConfig(config))
   return ok('阅读配置已保存到浏览器')
 }
 
@@ -881,7 +865,7 @@ const getBookContent = async (
 
 const search = async (
   searchKey: string,
-  onReceive: (data: SeachBook[]) => void,
+  onReceive: (data: SearchBook[]) => void,
   onFinish: () => void,
 ) => {
   const key = searchKey.trim().toLocaleLowerCase()
@@ -943,9 +927,9 @@ const saveSource = async (
   kind: SourceKind = getCurrentSourceKind(),
 ): ApiResult<string> => {
   const map = new Map(
-    readSources(kind).map(item => [sourceUniqueKey(item), item]),
+    readSources(kind).map(item => [getSourceUniqueKey(item), item]),
   )
-  map.set(sourceUniqueKey(source), source)
+  map.set(getSourceUniqueKey(source), source)
   writeSources(Array.from(map.values()), kind)
   return ok('源已保存到浏览器')
 }
@@ -962,10 +946,10 @@ const deleteSource = async (
   sources: Source[],
   kind: SourceKind = getCurrentSourceKind(),
 ): ApiResult<string> => {
-  const deleteKeys = new Set(sources.map(sourceUniqueKey))
+  const deleteKeys = new Set(sources.map(getSourceUniqueKey))
   writeSources(
     readSources(kind).filter(
-      source => !deleteKeys.has(sourceUniqueKey(source)),
+      source => !deleteKeys.has(getSourceUniqueKey(source)),
     ),
     kind,
   )
@@ -1014,8 +998,8 @@ const exportStandaloneData = async (): ApiResult<StandaloneBackupData> => {
   return ok({
     version: STANDALONE_BACKUP_VERSION,
     exportedAt: new Date().toISOString(),
-    readConfig: readJson(CONFIG_KEY, DEFAULT_CONFIG),
-    bookSources: readJson<BookSoure[]>(BOOK_SOURCE_KEY, []),
+    readConfig: normalizeReadConfig(readJson(CONFIG_KEY, DEFAULT_READ_CONFIG)),
+    bookSources: readJson<BookSource[]>(BOOK_SOURCE_KEY, []),
     rssSources: readJson<RssSource[]>(RSS_SOURCE_KEY, []),
     books,
     chapters,

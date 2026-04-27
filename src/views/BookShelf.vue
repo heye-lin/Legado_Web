@@ -32,7 +32,7 @@
                   readingRecent.author,
                   readingRecent.chapterIndex,
                   readingRecent.chapterPos,
-                  readingRecent.isSeachBook,
+                  readingRecent.isSearchBook,
                   true,
                 )
               "
@@ -50,7 +50,7 @@
               size="large"
               class="setting-connect"
               :class="{ 'no-point': newConnect }"
-              @click="setLegadoRetmoteUrl"
+              @click="setLegadoRemoteUrl"
             >
               {{ connectStatus }}
             </el-tag>
@@ -161,12 +161,12 @@ import { Search as SearchIcon } from '@element-plus/icons-vue'
 import { baseURL_localStorage_key } from '@/api/axios'
 import API, {
   legado_http_entry_point,
-  parseLeagdoHttpUrlWithDefault,
+  parseLegadoHttpUrlWithDefault,
   setApiEntryPoint,
   isStandaloneMode,
 } from '@api'
 import { validatorHttpUrl } from '@/utils/utils'
-import type { Book, SeachBook } from '@/book'
+import type { Book, SearchBook } from '@/book'
 import type { webReadConfig } from '@/web'
 import {
   type BookshelfBook,
@@ -178,7 +178,7 @@ import {
   getBookReadPosition,
   getErrorMessage,
   hasBookOnShelf,
-  isSearchBook,
+  isSearchBook as isSearchResultBook,
   loadStoredReadingRecent,
   saveReadingRecent,
   saveReadingSession,
@@ -215,7 +215,7 @@ const { showLoading, closeLoading, loadingWrapper, isLoading } = useLoading(
 )
 
 // 书架书籍和在线书籍搜索
-const books = shallowRef<Book[] | SeachBook[]>([])
+const books = shallowRef<Book[] | SearchBook[]>([])
 const searchWord = ref('')
 const searchPlaceholder = computed(() =>
   isStandaloneMode
@@ -307,7 +307,7 @@ const searchBook = () => {
 const connectionStore = useConnectionStore()
 const { connectStatus, connectType, newConnect } = storeToRefs(connectionStore)
 
-const setLegadoRetmoteUrl = () => {
+const setLegadoRemoteUrl = () => {
   if (isStandaloneMode) {
     ElMessageBox.alert(
       '当前是纯 Web 本地模式：书籍、章节、阅读进度、阅读配置和源配置都保存在浏览器 IndexedDB/localStorage 中；不需要 Android App，也不会连接后端。',
@@ -337,7 +337,7 @@ const setLegadoRetmoteUrl = () => {
               applyReadConfig(config)
               instance.confirmButtonLoading = false
               store.clearSearchBooks()
-              setApiEntryPoint(...parseLeagdoHttpUrlWithDefault(url))
+              setApiEntryPoint(...parseLegadoHttpUrlWithDefault(url))
               if (url === location.origin) {
                 localStorage.removeItem(baseURL_localStorage_key)
               } else {
@@ -413,9 +413,13 @@ const handleBookDelete = async (book: BookshelfBook) => {
 }
 
 const handleBookClick = async (book: BookshelfBook) => {
-  const isSeachBook = isSearchBook(book)
-  if (isSeachBook) {
-    await API.saveBook(book)
+  const isSearchResult = isSearchResultBook(book)
+  if (isSearchResult) {
+    const result = await API.saveBook(book)
+    if (!result.data.isSuccess) {
+      ElMessage.error(result.data.errorMsg)
+      return
+    }
   }
   const { chapterIndex, chapterPos } = getBookReadPosition(book)
   toDetail(
@@ -424,7 +428,7 @@ const handleBookClick = async (book: BookshelfBook) => {
     book.author,
     chapterIndex,
     chapterPos,
-    isSeachBook,
+    isSearchResult,
   )
 }
 
@@ -434,7 +438,7 @@ const toDetail = (
   bookAuthor: string,
   chapterIndex: number,
   chapterPos: number,
-  isSeachBook: boolean | undefined = false,
+  isSearchBook: boolean | undefined = false,
   fromReadRecentClick = false,
 ) => {
   if (bookName === '尚无阅读记录') return
@@ -451,7 +455,7 @@ const toDetail = (
     bookUrl,
     chapterIndex,
     chapterPos,
-    isSeachBook: isSeachBook ?? false,
+    isSearchBook: isSearchBook ?? false,
   }
   saveReadingSession(recent)
   readingRecent.value = recent
@@ -472,7 +476,9 @@ onMounted(() => {
   //获取最近阅读书籍
   restoreReadingRecent()
   console.log('bookshelf mounted')
-  loadingWrapper(loadShelf())
+  void loadingWrapper(loadShelf()).catch(error => {
+    ElMessage.error(`加载书架失败：${getErrorMessage(error)}`)
+  })
 })
 </script>
 

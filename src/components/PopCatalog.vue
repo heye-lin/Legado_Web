@@ -30,7 +30,7 @@ const store = useBookStore()
 
 const { catalog, popCataVisible, miniInterface } = storeToRefs(store)
 
-//主题
+// 主题
 const isNight = computed(() => store.theme)
 const theme = computed(() => store.theme)
 const popupTheme = computed(() => {
@@ -39,12 +39,12 @@ const popupTheme = computed(() => {
   }
 })
 
-//虚拟列表 数据源
+// 虚拟列表数据源
 const virtualListdata = computed(() => {
   const catalogValue = catalog.value
   if (miniInterface.value) return catalogValue
 
-  // pc端 virtualListIitem有2个章节
+  // PC 端 virtualListItem 有 2 个章节
   const length = Math.ceil(catalogValue.length / 2)
   const virtualListDataSource = new Array<{
     index: number
@@ -62,7 +62,7 @@ const virtualListdata = computed(() => {
   return virtualListDataSource
 })
 
-//打开目录 计算当前章节对应的虚拟列表位置
+// 打开目录时计算当前章节对应的虚拟列表位置
 const virtualListRef = ref()
 const currentChapterIndex = computed({
   get: () => store.readingBook.chapterIndex,
@@ -71,11 +71,11 @@ const currentChapterIndex = computed({
 const virtualListIndex = computed(() => {
   const index = currentChapterIndex.value
   if (miniInterface.value) return index
-  // pc端 virtualListIitem有2个章节
+  // PC 端 virtualListItem 有 2 个章节
   return Math.floor(index / 2)
 })
 onUpdated(() => {
-  // dom更新触发ResizeObserver，更新虚拟列表内部的sizes Map
+  // DOM 更新触发 ResizeObserver，更新虚拟列表内部的 sizes Map
   if (!popCataVisible.value) return
   virtualListRef.value.scrollToIndex(virtualListIndex.value)
 })

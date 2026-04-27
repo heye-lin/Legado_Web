@@ -131,9 +131,9 @@ const push = () => {
           store.setPushReturnSources(okData)
         }
         ElMessage({
-          message: `批量推送源到「${apiTargetName}」\n共计: ${
+          message: `批量推送源到「${apiTargetName}」\n共计：${
             sources.length
-          } 条\n成功: ${okData.length} 条\n失败: ${
+          } 条\n成功：${okData.length} 条\n失败：${
             sources.length - okData.length
           } 条${failMsg}`,
           type: 'success',
@@ -141,38 +141,25 @@ const push = () => {
       }
     } else {
       ElMessage({
-        message: `批量推送源失败!\nErrorMsg: ${data.errorMsg}`,
+        message: `批量推送源失败！\n错误信息：${data.errorMsg}`,
         type: 'error',
       })
     }
   })
 }
 
-const conver2Tab = () => {
+const convertToTab = () => {
   store.changeTabName('editTab')
   store.changeEditTabSource(store.currentSource)
 }
-const conver2Source = () => {
+const convertToSource = () => {
   store.changeCurrentSource(store.editTabSource)
-}
-
-const undo = () => {
-  store.editHistoryUndo()
 }
 
 const clearEdit = () => {
   store.clearEdit()
   ElMessage({
     message: '已清除',
-    type: 'success',
-  })
-}
-
-const redo = () => {
-  store.clearEdit()
-  store.clearAllHistory()
-  ElMessage({
-    message: '已清除所有历史记录',
     type: 'success',
   })
 }
@@ -189,18 +176,18 @@ const saveSource = () => {
           message: `源《${sourceName}》已成功保存到「${apiTargetName}」`,
           type: 'success',
         })
-        //save to store
+        // 保存到 store
         store.saveCurrentSource()
       } else {
         ElMessage({
-          message: `源《${sourceName}》保存失败!\nErrorMsg: ${data.errorMsg}`,
+          message: `源《${sourceName}》保存失败！\n错误信息：${data.errorMsg}`,
           type: 'error',
         })
       }
     })
   } else {
     ElMessage({
-      message: `请检查<必填>项是否全部填写`,
+      message: `请检查「必填」项是否全部填写`,
       type: 'error',
     })
   }
@@ -261,11 +248,9 @@ const buttons = ref<ToolButton[]>(
   Array.of(
     { name: '⇈推送源', hotKeys: [], action: push },
     { name: '⇊拉取源', hotKeys: [], action: pull },
-    { name: '⋙生成源', hotKeys: [], action: conver2Tab },
-    { name: '⋘编辑源', hotKeys: [], action: conver2Source },
+    { name: '⋙生成源', hotKeys: [], action: convertToTab },
+    { name: '⋘编辑源', hotKeys: [], action: convertToSource },
     { name: '✗清空表单', hotKeys: [], action: clearEdit },
-    { name: '↶撤销操作', hotKeys: [], action: undo },
-    { name: '↷重做操作', hotKeys: [], action: redo },
     { name: '⇏调试源', hotKeys: [], action: debug },
     { name: '✓保存源', hotKeys: [], action: saveSource },
     { name: '⇧导出源', hotKeys: [], action: exportSources },
@@ -287,8 +272,8 @@ const stopRecordKeyDown = () => {
 
 watch(
   hotkeysDialogVisible,
-  visibale => {
-    if (!visibale) {
+  visible => {
+    if (!visible) {
       hotkeys.unbind('*')
       readHotkeysConfig()
       bindHotKeys()
@@ -296,12 +281,12 @@ watch(
     }
     readHotkeysConfig()
     hotkeys.unbind()
-    /**监听按键 */
+    /** 监听按键 */
     hotkeys('*', event => {
       event.preventDefault()
       const pressedKeys = hotkeys.getPressedKeyString()
       if (pressedKeys.length == 1 && pressedKeys[0] == 'esc') {
-        //单独按下esc 不录入
+        // 单独按下 ESC 不录入
         return
       }
       if (recordKeyDowning.value && recordKeyDownIndex.value > -1)
@@ -314,7 +299,7 @@ watch(
 const recordKeyDown = (index: number) => {
   recordKeyDowning.value = true
   ElMessage({
-    message: '按ESC键或者点击空白处结束录入',
+    message: '按 ESC 键或者点击空白处结束录入',
     type: 'info',
   })
   buttons.value[index].hotKeys = []
@@ -331,7 +316,7 @@ const saveHotKeys = () => {
 }
 
 const bindHotKeys = () => {
-  // hotkeys默认过滤INPUT SELECT TEXTAREA
+  // hotkeys 默认过滤 INPUT、SELECT、TEXTAREA
   hotkeys.filter = () => true
   buttons.value.forEach(({ hotKeys, action }) => {
     if (hotKeys.length == 0) return
@@ -370,7 +355,7 @@ function readHotkeysConfig() {
 }
 
 onMounted(() => {
-  /**读取热键配置 */
+  /** 读取热键配置 */
   if (readHotkeysConfig()) {
     hotkeysDialogVisible.value = false
   }

@@ -29,7 +29,7 @@ type BaseSource = {
    */
   jsLib?: string
 }
-type BookSoure = BaseSource & {
+type BookSource = BaseSource & {
   // 地址，包括 http/https
   bookSourceUrl: string
   // 名称
@@ -79,25 +79,17 @@ type BookSoure = BaseSource & {
   // 段评规则
   ruleReview?: ReviewRule
 }
-type SearchRule = {
-  checkKeyWord?: string
+type SourceRule = {
   [prop: string]: string | undefined
 }
-/* type ExploreRule = {
-    [prop:string]: string
+type SearchRule = SourceRule & {
+  checkKeyWord?: string
 }
-type BookInfoRule = {
-    [prop:string]: string
-}
-type TocRule = {
-    [prop:string]: string
-}
-type ContentRule = {
-    [prop:string]: string
-}
-type ReviewRule = {
-    [prop:string]: string
-} */
+type ExploreRule = SourceRule
+type BookInfoRule = SourceRule
+type TocRule = SourceRule
+type ContentRule = SourceRule
+type ReviewRule = SourceRule
 type RssSource = BaseSource & {
   sourceUrl: string
   // 名称
@@ -160,6 +152,6 @@ type RssSource = BaseSource & {
   lastUpdateTime: number
   customOrder: number
 }
-type Source = BookSoure | RssSource
+type Source = BookSource | RssSource
 
-export { Source, BookSoure, RssSource }
+export { Source, BookSource, RssSource }

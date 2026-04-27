@@ -33,7 +33,7 @@
           >
         </li>
         <li class="font-list">
-          <i>自定字体</i>
+          <i>自定义字体</i>
           <el-tooltip effect="dark" content="自定义的字体名称" placement="top">
             <input
               type="text"
@@ -50,7 +50,7 @@
             v-model:visible="customFontSavePopVisible"
           >
             <p>
-              已经安装在您的设备上的字体请确认输入的字体名称完整无误，或者从网络下载字体。
+              如果字体已安装在您的设备上，请确认输入的字体名称完整无误；也可以从网络下载字体。
             </p>
             <div style="text-align: right; margin: 0">
               <el-button
@@ -183,18 +183,18 @@ const saveConfigDebounce = useDebounceFn(
   () => API.saveReadConfig(store.config),
   500,
 )
-//阅读界面设置改变时保存同步配置
+// 阅读界面设置改变时保存同步配置
 watch(
   () => store.config,
   () => {
     saveConfigDebounce()
   },
   {
-    deep: 2, //深度为2
+    deep: 2, // 深度为 2
   },
 )
 
-//主题颜色
+// 主题颜色
 const theme = computed(() => store.theme)
 const isNight = computed(() => store.isNight)
 const moonIcon = computed(() => (theme.value == 6 ? '' : ''))
@@ -230,7 +230,7 @@ const setTheme = (theme: number) => {
   store.config.theme = theme
 }
 
-//预置字体
+// 预置字体
 const fonts = ref(['雅黑', '宋体', '楷书'])
 const setFont = (font: number) => {
   store.config.font = font
@@ -238,7 +238,7 @@ const setFont = (font: number) => {
 const selectedFont = computed(() => {
   return store.config.font
 })
-//自定义字体
+// 自定义字体
 const customFontName = ref(store.config.customFontName)
 const customFontSavePopVisible = ref(false)
 const setCustomFont = () => {
@@ -249,11 +249,11 @@ const setCustomFont = () => {
 // 加载网络字体
 const loadFontFromURL = () => {
   customFontSavePopVisible.value = false
-  ElMessageBox.prompt('请输入 字体网络链接', '提示', {
+  ElMessageBox.prompt('请输入字体网络链接', '提示', {
     confirmButtonText: '确定',
     cancelButtonText: '取消',
     inputPattern: /^https?:.+$/,
-    inputErrorMessage: 'url 形式不正确',
+    inputErrorMessage: 'URL 格式不正确',
     beforeClose: (action, instance, done) => {
       if (action === 'confirm') {
         instance.confirmButtonLoading = true
@@ -261,7 +261,7 @@ const loadFontFromURL = () => {
         // instance.inputValue
         const url = instance.inputValue
         if (typeof FontFace !== 'function') {
-          ElMessage.error('浏览器不支持FontFace')
+          ElMessage.error('浏览器不支持 FontFace')
           return done()
         }
         const fontface = new FontFace(customFontName.value, `url("${url}")`)
@@ -278,7 +278,7 @@ const loadFontFromURL = () => {
           .catch(function (error) {
             instance.confirmButtonLoading = false
             instance.confirmButtonText = '确定'
-            ElMessage.error('下载失败，请检查您输入的 url')
+            ElMessage.error('下载失败，请检查您输入的 URL')
             throw error
           })
       } else {
@@ -288,7 +288,7 @@ const loadFontFromURL = () => {
   })
 }
 
-//字体大小
+// 字体大小
 const fontSize = computed(() => {
   return store.config.fontSize
 })
@@ -299,7 +299,7 @@ const lessFontSize = () => {
   if (store.config.fontSize > 12) store.config.fontSize -= 2
 }
 
-//字 行 段落间距
+// 字距、行距、段距
 const spacing = computed(() => {
   return store.config.spacing
 })
@@ -322,7 +322,7 @@ const moreParagraphSpacing = () => {
   store.config.spacing.paragraph += 0.1
 }
 
-//页面宽度
+// 页面宽度
 const readWidth = computed(() => {
   return store.config.readWidth
 })
@@ -335,7 +335,7 @@ const lessReadWidth = () => {
   if (store.config.readWidth > 640) store.config.readWidth -= 160
 }
 
-//翻页速度
+// 翻页速度
 const jumpDuration = computed(() => {
   return store.config.jumpDuration
 })
@@ -347,7 +347,7 @@ const lessJumpDuration = () => {
   store.config.jumpDuration -= 100
 }
 
-//无限加载
+// 无限加载
 const infiniteLoading = computed(() => {
   return store.config.infiniteLoading
 })

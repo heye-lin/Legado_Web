@@ -25,7 +25,7 @@ const isSelected = (idx: number) => {
   return idx == props.currentChapterIndex
 }
 
-// PC端 一个虚拟列表中有两个章节
+// PC 端一个虚拟列表项中有两个章节
 const catas = computed(() => {
   const source = props.source
   if ('catas' in source) return source.catas

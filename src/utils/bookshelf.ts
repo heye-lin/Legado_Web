@@ -1,8 +1,8 @@
-import type { Book, SeachBook } from '@/book'
+import type { Book, SearchBook } from '@/book'
 
 export { getErrorMessage } from './jsonFile'
 
-export type BookshelfBook = Book | SeachBook
+export type BookshelfBook = Book | SearchBook
 
 export type ReadingRecentBook = {
   name: string
@@ -10,7 +10,7 @@ export type ReadingRecentBook = {
   bookUrl: string
   chapterIndex: number
   chapterPos: number
-  isSeachBook?: boolean
+  isSearchBook?: boolean
 }
 
 const READING_RECENT_STORAGE_KEY = 'readingRecent'
@@ -20,6 +20,7 @@ const READING_SESSION_KEYS = [
   'bookAuthor',
   'chapterIndex',
   'chapterPos',
+  'isSearchBook',
   'isSeachBook',
 ]
 
@@ -29,7 +30,7 @@ export const createDefaultReadingRecent = (): ReadingRecentBook => ({
   bookUrl: '',
   chapterIndex: 0,
   chapterPos: 0,
-  isSeachBook: false,
+  isSearchBook: false,
 })
 
 const isObjectRecord = (value: unknown): value is Record<string, unknown> =>
@@ -56,8 +57,10 @@ const parseStoredReadingRecent = (
       chapterIndex:
         typeof parsed.chapterIndex === 'number' ? parsed.chapterIndex : 0,
       chapterPos: typeof parsed.chapterPos === 'number' ? parsed.chapterPos : 0,
-      isSeachBook:
-        typeof parsed.isSeachBook === 'boolean' ? parsed.isSeachBook : false,
+      isSearchBook:
+        typeof parsed.isSearchBook === 'boolean'
+          ? parsed.isSearchBook
+          : parsed.isSeachBook === true,
     }
   } catch {
     return undefined
@@ -89,7 +92,8 @@ export const saveReadingSession = (recent: ReadingRecentBook) => {
   sessionStorage.setItem('bookAuthor', recent.author)
   sessionStorage.setItem('chapterIndex', String(recent.chapterIndex))
   sessionStorage.setItem('chapterPos', String(recent.chapterPos))
-  sessionStorage.setItem('isSeachBook', String(recent.isSeachBook))
+  sessionStorage.setItem('isSearchBook', String(recent.isSearchBook))
+  sessionStorage.removeItem('isSeachBook')
 }
 
 export const clearReadingSession = () => {
@@ -113,7 +117,7 @@ export const filterShelfBooks = (books: Book[], keyword: string) => {
 export const hasBookOnShelf = (books: Book[], bookUrl: string) =>
   books.some(book => book.bookUrl === bookUrl)
 
-export const isSearchBook = (book: BookshelfBook): book is SeachBook =>
+export const isSearchBook = (book: BookshelfBook): book is SearchBook =>
   'respondTime' in book
 
 export const getBookReadPosition = (book: BookshelfBook) => {

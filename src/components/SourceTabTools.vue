@@ -21,15 +21,15 @@ const store = useSourceStore()
 
 const current_tab = computed({
   get: () => store.currentTab,
-  set: val => (store.currentTab = val),
+  set: tabName => store.changeTabName(tabName),
 })
 
-const tabData = ref([
+const tabData = [
   ['editTab', '编辑源'],
   ['editDebug', '调试源'],
   ['editList', '源列表'],
   ['editHelp', '帮助信息'],
-])
+] as const
 </script>
 
 <style lang="scss" scoped>

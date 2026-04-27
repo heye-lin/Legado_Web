@@ -1,11 +1,11 @@
 import { defineStore } from 'pinia'
 import {
-  emptyBookSource,
-  emptyRssSource,
+  createEditableSource,
+  normalizeSourceForEdit,
   getSourceUniqueKey,
   convertSourcesToMap,
 } from '@utils/source'
-import type { BookSoure, RssSource, Source } from '@/source'
+import type { BookSource, RssSource, Source } from '@/source'
 import {
   type SourceKind,
   getCurrentSourceKind,
@@ -14,8 +14,10 @@ import {
 
 const cloneSource = <T extends Source>(source: T): T =>
   JSON.parse(JSON.stringify(source)) as T
-const getEmptySource = (kind: SourceKind) =>
-  isBookSourceKind(kind) ? emptyBookSource : emptyRssSource
+const getEmptySource = (kind: SourceKind) => createEditableSource(kind)
+const normalizeSourcesForKind = (sources: Source[], kind: SourceKind) =>
+  sources.map(source => createEditableSource(kind, source))
+
 const sourceMatchesKind = (source: Source, kind: SourceKind) => {
   if (isBookSourceKind(kind)) return !('sourceUrl' in source)
   return !(
@@ -33,13 +35,13 @@ export const useSourceStore = defineStore('source', {
     const currentSourceKind = getCurrentSourceKind()
     return {
       currentSourceKind,
-      bookSources: shallowRef([] as BookSoure[]), // 临时存放所有书源,
+      bookSources: shallowRef([] as BookSource[]), // 临时存放所有书源,
       rssSources: shallowRef([] as RssSource[]), // 临时存放所有订阅源
       savedSources: [] as Source[], // 批量保存到阅读app成功的源
       currentSource: cloneSource(getEmptySource(currentSourceKind)) as Source, // 当前编辑的源
       currentTab: localStorage.getItem('tabName') || 'editTab',
       editTabSource: {} as Source, // 生成序列化的json数据
-      isDebuging: false,
+      isDebugging: false,
     }
   },
   getters: {
@@ -54,11 +56,12 @@ export const useSourceStore = defineStore('source', {
       convertSourcesToMap(state.savedSources),
     currentSourceUrl: state =>
       isBookSourceKind(state.currentSourceKind)
-        ? (state.currentSource as BookSoure).bookSourceUrl
+        ? (state.currentSource as BookSource).bookSourceUrl
         : (state.currentSource as RssSource).sourceUrl,
     searchKey: (state): string =>
       isBookSourceKind(state.currentSourceKind)
-        ? (state.currentSource as BookSoure)?.ruleSearch?.checkKeyWord || '我的'
+        ? (state.currentSource as BookSource)?.ruleSearch?.checkKeyWord ||
+          '我的'
         : '',
   },
   actions: {
@@ -75,25 +78,29 @@ export const useSourceStore = defineStore('source', {
     },
     startDebug() {
       this.ensureCurrentSourceKind()
-      this.currentTab = 'editDebug'
-      this.isDebuging = true
+      this.changeTabName('editDebug')
+      this.isDebugging = true
     },
     debugFinish() {
-      this.isDebuging = false
+      this.isDebugging = false
     },
 
     //拉取源后保存
     saveSources(data: Source[], kind?: SourceKind) {
       const targetKind = kind ?? this.currentSourceKind
       if (isBookSourceKind(targetKind)) {
-        this.bookSources = markRaw(data) as BookSoure[]
+        this.bookSources = markRaw(
+          normalizeSourcesForKind(data, targetKind),
+        ) as BookSource[]
       } else {
-        this.rssSources = markRaw(data) as RssSource[]
+        this.rssSources = markRaw(
+          normalizeSourcesForKind(data, targetKind),
+        ) as RssSource[]
       }
     },
     //批量推送
-    setPushReturnSources(returnSoures: Source[]) {
-      this.savedSources = returnSoures
+    setPushReturnSources(returnSources: Source[]) {
+      this.savedSources = returnSources
     },
     //删除源
     deleteSources(data: Source[], kind?: SourceKind) {
@@ -110,12 +117,12 @@ export const useSourceStore = defineStore('source', {
     saveCurrentSource() {
       const source = this.currentSource,
         map = this.sourcesMap
-      map.set(getSourceUniqueKey(source), JSON.parse(JSON.stringify(source)))
+      map.set(getSourceUniqueKey(source), cloneSource(source))
       this.saveSources(Array.from(map.values()), this.currentSourceKind)
     },
-    // 更改当前编辑的源qq
+    // 更改当前编辑的源
     changeCurrentSource(source: Source) {
-      this.currentSource = cloneSource(source)
+      this.currentSource = cloneSource(normalizeSourceForEdit(source))
     },
     // update editTab tabName and editTab info
     changeTabName(tabName: string) {
@@ -123,41 +130,11 @@ export const useSourceStore = defineStore('source', {
       localStorage.setItem('tabName', tabName)
     },
     changeEditTabSource(source: Source) {
-      this.editTabSource = cloneSource(source)
-    },
-    editHistory(history: Source) {
-      let historyObj
-      if (localStorage.getItem('history')) {
-        historyObj = JSON.parse(localStorage.getItem('history')!)
-        historyObj.new.push(history)
-        if (historyObj.new.length > 50) {
-          historyObj.new.shift()
-        }
-        if (historyObj.old.length > 50) {
-          historyObj.old.shift()
-        }
-        localStorage.setItem('history', JSON.stringify(historyObj))
-      } else {
-        const arr = { new: [history], old: [] }
-        localStorage.setItem('history', JSON.stringify(arr))
-      }
-    },
-    editHistoryUndo() {
-      if (localStorage.getItem('history')) {
-        const historyObj = JSON.parse(localStorage.getItem('history')!)
-        historyObj.old.push(this.currentSource)
-        if (historyObj.new.length) {
-          this.currentSource = historyObj.new.pop()
-        }
-        localStorage.setItem('history', JSON.stringify(historyObj))
-      }
-    },
-    clearAllHistory() {
-      localStorage.setItem('history', JSON.stringify({ new: [], old: [] }))
+      this.editTabSource = cloneSource(normalizeSourceForEdit(source))
     },
     clearEdit() {
       this.editTabSource = {} as Source
-      this.currentSource = cloneSource(getEmptySource(this.currentSourceKind)) //复制一份新对象
+      this.currentSource = cloneSource(getEmptySource(this.currentSourceKind))
     },
 
     // clear current source list

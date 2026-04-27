@@ -8,12 +8,17 @@
   >
     <img
       class="full"
-      v-if="/^\s*<img[^>]*src[^>]+>$/.test(String(para))"
+      v-if="isSingleImageContent(para)"
       :src="getImageSrc(para)"
       @error.once="proxyImage"
       loading="lazy"
     />
-    <p v-else :style="{ fontFamily, fontSize }" v-html="replaceImage(para)" @error.capture="handleImgLoadError" />
+    <p
+      v-else
+      :style="{ fontFamily, fontSize }"
+      v-html="replaceImage(para)"
+      @error.capture="handleImgLoadError"
+    />
   </div>
 </template>
 
@@ -37,10 +42,17 @@ const props = defineProps<{
   fontSize: string
 }>()
 
-const imgPattern = /<img[^>]*src=['"]([^'"]*(?:['"][^>]+\})?)['"][^>]*>/g
+const imgPattern = /<img\b[^>]*\bsrc\s*=\s*(['"])(.*?)\1[^>]*>/gi
+const singleImgPattern = /^\s*<img\b[^>]*\bsrc\s*=\s*(['"])(.*?)\1[^>]*>\s*$/i
+
+const extractSingleImageSrc = (content: string) =>
+  content.match(singleImgPattern)?.[2]
+const isSingleImageContent = (content: string) =>
+  extractSingleImageSrc(content) !== undefined
 
 const replaceImage = (content: string) => {
-  return content.replace(imgPattern, (match, src) => {
+  return content.replace(imgPattern, (match, quote: string, src: string) => {
+    void quote
     if (isLegadoUrl(src)) {
       const proxySrc = API.getProxyImageUrl(
         bookUrl.value,
@@ -54,30 +66,24 @@ const replaceImage = (content: string) => {
 }
 
 const getImageSrc = (content: string) => {
-  const imgPattern = /<img[^>]*src=['"]([^'"]*(?:['"][^>]+\})?)['"][^>]*>/
-  const src = content.match(imgPattern)![1] //reg tested in template
-  if (isLegadoUrl(src))
-    return API.getProxyImageUrl(
-      bookUrl.value,
-      src,
-      readWidth.value,
-    )
+  const src = extractSingleImageSrc(content)
+  if (src === undefined) return ''
+  if (isLegadoUrl(src)) {
+    return API.getProxyImageUrl(bookUrl.value, src, readWidth.value)
+  }
   return src
 }
 const proxyImage = (event: Event) => {
-  /* 获取IMG标签原始的src
+  /* 获取 IMG 标签原始的 src
     <img src="/test" />
-    假设location.href = http://example.com
+    假设 location.href = http://example.com
     event.target.src 返回 http://example.com/test
-    (event.target as HTMLImageElement)?.getAttribute("src")  返回/test
+    target.getAttribute('src') 返回 /test
   */
-  const src = (event.target as HTMLImageElement)?.getAttribute("src")
+  const target = event.target as HTMLImageElement
+  const src = target.getAttribute('src')
   if (src != null && src.length > 0) {
-    (event.target as HTMLImageElement).src = API.getProxyImageUrl(
-      bookUrl.value,
-      src,
-      readWidth.value,
-    )
+    target.src = API.getProxyImageUrl(bookUrl.value, src, readWidth.value)
   }
 }
 
@@ -85,14 +91,13 @@ const proxyImage = (event: Event) => {
  * 处理传入的IMG标签错误事件，自动替换图片的代理链接
  */
 const handleImgLoadError = (event: Event) => {
-  if ((event.target as HTMLElement)?.tagName === "IMG") {
-    console.log("[ChapterContent]: IMG Load Error, replace src:",
-      (event.target as HTMLImageElement)?.getAttribute("src"), "=>",
-      API.getProxyImageUrl(
-        bookUrl.value,
-        (event.target as HTMLImageElement)?.getAttribute("src") ?? "",
-        readWidth.value,
-      )
+  if ((event.target as HTMLElement)?.tagName === 'IMG') {
+    const src = (event.target as HTMLImageElement).getAttribute('src') ?? ''
+    console.log(
+      '[ChapterContent]: IMG Load Error, replace src:',
+      src,
+      '=>',
+      API.getProxyImageUrl(bookUrl.value, src, readWidth.value),
     )
     proxyImage(event)
   }
@@ -113,7 +118,7 @@ const chapterPos = computed(() => {
 
 const titleRef = ref<HTMLElement>()
 const paragraphRef = ref<HTMLParagraphElement[]>()
-const scrollToReadedLength = (length: number) => {
+const scrollToReadLength = (length: number) => {
   if (length === 0) return
   const paragraphIndex = chapterPos.value.findIndex(
     wordCount => wordCount >= length,
@@ -126,17 +131,17 @@ const scrollToReadedLength = (length: number) => {
   })
 }
 defineExpose({
-  scrollToReadedLength,
+  scrollToReadLength,
 })
 let intersectionObserver: IntersectionObserver | null = null
-const emit = defineEmits(['readedLengthChange'])
+const emit = defineEmits(['readLengthChange'])
 onMounted(() => {
   intersectionObserver = new IntersectionObserver(
     entries => {
       for (const { target, isIntersecting } of entries) {
         if (isIntersecting) {
           emit(
-            'readedLengthChange',
+            'readLengthChange',
             props.chapterIndex,
             parseInt((target as HTMLElement).dataset.chapterpos as string),
           )

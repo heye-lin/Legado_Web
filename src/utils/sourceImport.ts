@@ -1,4 +1,5 @@
 import type { Source } from '@/source'
+import { createEditableSource } from './source'
 import { isPlainObject } from './jsonFile'
 import {
   type SourceKind,
@@ -34,5 +35,5 @@ export const parseSourcesForKind = (
     )
   }
 
-  return data as Source[]
+  return data.map(source => createEditableSource(kind, source as Source))
 }

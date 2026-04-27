@@ -9,7 +9,7 @@ import type {
   Book,
   BookChapter,
   BookProgress,
-  SeachBook,
+  SearchBook,
 } from '@/book'
 import type { Source } from '@/source'
 import {
@@ -18,13 +18,13 @@ import {
   isBookSourceKind,
 } from '@/utils/sourceKind'
 
-export type LeagdoApiResponse<T> = {
+export type LegadoApiResponse<T> = {
   isSuccess: boolean
   errorMsg: string
   data: T
 }
 
-type ApiResult<T> = Promise<{ data: LeagdoApiResponse<T> }>
+type ApiResult<T> = Promise<{ data: LegadoApiResponse<T> }>
 
 const standaloneFlag = import.meta.env.VITE_STANDALONE
 export const isStandaloneMode =
@@ -56,7 +56,7 @@ export const setApiEntryPoint = (
 // 书架API
 // Http
 const appGetReadConfig = async (http_url = legado_http_entry_point) => {
-  const { data } = await ajax.get<LeagdoApiResponse<string>>('getReadConfig', {
+  const { data } = await ajax.get<LegadoApiResponse<string>>('getReadConfig', {
     baseURL: http_url.toString(),
     timeout: 3000,
   })
@@ -70,7 +70,7 @@ const getReadConfig = (http_url = legado_http_entry_point) =>
   isStandaloneMode ? standaloneApi.getReadConfig() : appGetReadConfig(http_url)
 
 const appSaveReadConfig = (config: webReadConfig) =>
-  ajax.post<LeagdoApiResponse<string>>('saveReadConfig', config)
+  ajax.post<LegadoApiResponse<string>>('saveReadConfig', config)
 const saveReadConfig = (config: webReadConfig) =>
   isStandaloneMode
     ? standaloneApi.saveReadConfig(config)
@@ -99,12 +99,12 @@ const saveBookProgressWithBeacon = (bookProgress: BookProgress) =>
     : appSaveBookProgressWithBeacon(bookProgress)
 
 const appGetBookShelf = () =>
-  ajax.get<LeagdoApiResponse<Book[]>>('getBookshelf')
+  ajax.get<LegadoApiResponse<Book[]>>('getBookshelf')
 const getBookShelf = () =>
   isStandaloneMode ? standaloneApi.getBookShelf() : appGetBookShelf()
 
 const appGetChapterList = (/** @type {string} */ bookUrl: string) =>
-  ajax.get<LeagdoApiResponse<BookChapter[]>>(
+  ajax.get<LegadoApiResponse<BookChapter[]>>(
     'getChapterList?url=' + encodeURIComponent(bookUrl),
   )
 const getChapterList = (bookUrl: string) =>
@@ -116,7 +116,7 @@ const appGetBookContent = (
   /** @type {string} */ bookUrl: string,
   /** @type {number} */ chapterIndex: number,
 ) =>
-  ajax.get<LeagdoApiResponse<string>>(
+  ajax.get<LegadoApiResponse<string>>(
     'getBookContent?url=' +
       encodeURIComponent(bookUrl) +
       '&index=' +
@@ -130,7 +130,7 @@ const getBookContent = (bookUrl: string, chapterIndex: number) =>
 // webSocket
 const appSearch = (
   searchKey: string,
-  onReceive: (data: SeachBook[]) => void,
+  onReceive: (data: SearchBook[]) => void,
   onFinish: () => void,
 ) => {
   const socket = new WebSocket(
@@ -156,7 +156,7 @@ const appSearch = (
 }
 const search = (
   searchKey: string,
-  onReceive: (data: SeachBook[]) => void,
+  onReceive: (data: SearchBook[]) => void,
   onFinish: () => void,
 ) =>
   isStandaloneMode
@@ -164,12 +164,12 @@ const search = (
     : appSearch(searchKey, onReceive, onFinish)
 
 const appSaveBook = (book: BaseBook) =>
-  ajax.post<LeagdoApiResponse<string>>('saveBook', book)
+  ajax.post<LegadoApiResponse<string>>('saveBook', book)
 const saveBook = (book: BaseBook) =>
   isStandaloneMode ? standaloneApi.saveBook(book) : appSaveBook(book)
 
 const appDeleteBook = (book: BaseBook) =>
-  ajax.post<LeagdoApiResponse<string>>('deleteBook', book)
+  ajax.post<LegadoApiResponse<string>>('deleteBook', book)
 const deleteBook = (book: BaseBook) =>
   isStandaloneMode ? standaloneApi.deleteBook(book) : appDeleteBook(book)
 
@@ -211,8 +211,8 @@ const getSources = (kind: SourceKind = getCurrentSourceKind()) =>
 
 const appSaveSource = (data: Source, kind: SourceKind) =>
   isBookSourceKind(kind)
-    ? ajax.post<LeagdoApiResponse<string>>('saveBookSource', data)
-    : ajax.post<LeagdoApiResponse<string>>('saveRssSource', data)
+    ? ajax.post<LegadoApiResponse<string>>('saveBookSource', data)
+    : ajax.post<LegadoApiResponse<string>>('saveRssSource', data)
 const saveSource = (data: Source, kind: SourceKind = getCurrentSourceKind()) =>
   isStandaloneMode
     ? standaloneApi.saveSource(data, kind)
@@ -220,8 +220,8 @@ const saveSource = (data: Source, kind: SourceKind = getCurrentSourceKind()) =>
 
 const appSaveSources = (data: Source[], kind: SourceKind) =>
   isBookSourceKind(kind)
-    ? ajax.post<LeagdoApiResponse<Source[]>>('saveBookSources', data)
-    : ajax.post<LeagdoApiResponse<Source[]>>('saveRssSources', data)
+    ? ajax.post<LegadoApiResponse<Source[]>>('saveBookSources', data)
+    : ajax.post<LegadoApiResponse<Source[]>>('saveRssSources', data)
 const saveSources = (
   data: Source[],
   kind: SourceKind = getCurrentSourceKind(),
@@ -232,8 +232,8 @@ const saveSources = (
 
 const appDeleteSource = (data: Source[], kind: SourceKind) =>
   isBookSourceKind(kind)
-    ? ajax.post<LeagdoApiResponse<string>>('deleteBookSources', data)
-    : ajax.post<LeagdoApiResponse<string>>('deleteRssSources', data)
+    ? ajax.post<LegadoApiResponse<string>>('deleteBookSources', data)
+    : ajax.post<LegadoApiResponse<string>>('deleteRssSources', data)
 const deleteSource = (
   data: Source[],
   kind: SourceKind = getCurrentSourceKind(),

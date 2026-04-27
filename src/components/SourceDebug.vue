@@ -21,6 +21,7 @@
 <script setup lang="ts">
 import API from '@api'
 import { Search } from '@element-plus/icons-vue'
+import { isValidSource } from '@/utils/source'
 import { isBookSourceKind, sourceKindFromPath } from '@/utils/sourceKind'
 
 const store = useSourceStore()
@@ -30,9 +31,9 @@ const printDebug = ref('')
 const searchKey = ref('')
 
 watch(
-  () => store.isDebuging,
+  () => store.isDebugging,
   () => {
-    if (store.isDebuging) startDebug()
+    if (store.isDebugging) startDebug()
   },
 )
 
@@ -43,8 +44,17 @@ const appendDebugMsg = (msg: string) => {
 }
 const startDebug = async () => {
   printDebug.value = ''
+  const source = store.currentSource
+  if (!isValidSource(source)) {
+    ElMessage({
+      message: `请检查「必填」项是否全部填写`,
+      type: 'error',
+    })
+    store.debugFinish()
+    return
+  }
   try {
-    await API.saveSource(store.currentSource, sourceKind.value)
+    await API.saveSource(source, sourceKind.value)
   } catch (e) {
     store.debugFinish()
     throw e
