@@ -1,12 +1,6 @@
 import { defineStore } from 'pinia'
 import API from '@api'
-import type {
-  BaseBook,
-  Book,
-  BookChapter,
-  BookProgress,
-  SearchBook,
-} from '@/book'
+import type { BaseBook, Book, BookChapter, BookProgress } from '@/book'
 import type { webReadConfig } from '@/web'
 import {
   createDefaultReadConfig,
@@ -14,12 +8,11 @@ import {
 } from '@/config/readConfig'
 import { ElMessage } from 'element-plus/es'
 
-let webReadConfigLoadedDate: Date | undefined
+let webReadConfigLoaded = false
 
 export const useBookStore = defineStore('book', {
   state: () => {
     return {
-      searchBooks: [] as SearchBook[],
       shelf: [] as Book[],
       catalog: [] as BookChapter[],
       readingBook: { chapterPos: 0, chapterIndex: 0 } as BaseBook & {
@@ -48,7 +41,7 @@ export const useBookStore = defineStore('book', {
         bookUrl,
         durChapterIndex: chapterIndex,
         durChapterPos: chapterPos,
-        durChapterTime: new Date().getTime(),
+        durChapterTime: Date.now(),
         durChapterTitle: title,
       }
     },
@@ -58,7 +51,7 @@ export const useBookStore = defineStore('book', {
     isNight: state => state.config.theme === 6,
   },
   actions: {
-    /** 从数据源强制刷新书架书籍 */
+    /** 从本地数据源强制刷新书架书籍 */
     async refreshBookShelf(): Promise<Book[]> {
       const resp = await API.getBookShelf()
       const { isSuccess, data, errorMsg } = resp.data
@@ -71,21 +64,19 @@ export const useBookStore = defineStore('book', {
           ElMessage.info(`书架数据已更新`)
         }
         this.shelf = data.sort((a, b) => {
-          const x = a['durChapterTime'] || 0
-          const y = b['durChapterTime'] || 0
+          const x = a.durChapterTime || 0
+          const y = b.durChapterTime || 0
           return y - x
         })
+      } else if (errorMsg?.includes('还没有添加小说') && this.shelf.length > 0) {
+        ElMessage.info('当前书架上的书籍已经被删除')
+        this.shelf = []
       } else {
-        if (errorMsg?.includes('还没有添加小说') && this.shelf.length > 0) {
-          ElMessage.info('当前书架上的书籍已经被删除')
-          this.shelf = []
-        } else {
-          ElMessage.error(errorMsg ?? '后端返回格式错误！')
-        }
+        ElMessage.error(errorMsg ?? '本地书架数据格式错误！')
       }
       return this.shelf
     },
-    /** 从数据源加载书架书籍，默认优先返回内存缓存 */
+    /** 从本地数据源加载书架书籍，默认优先返回内存缓存 */
     async loadBookShelf(force = false): Promise<Book[]> {
       if (this.shelf.length > 0 && !force) {
         void this.refreshBookShelf()
@@ -93,18 +84,16 @@ export const useBookStore = defineStore('book', {
       }
       return this.refreshBookShelf()
     },
-    /** 从后端加载书籍目录，优先返回内存缓存 */
+    /** 从本地数据源加载书籍目录，优先返回内存缓存 */
     async loadWebCatalog(
       book: typeof this.readingBook,
     ): Promise<BookChapter[]> {
       const { bookUrl, name, chapterIndex } = book
-      const fetchChapterList_promise = API.getChapterList(
-        bookUrl as string,
-      ).then(res => {
+      const fetchChapterList = API.getChapterList(bookUrl).then(res => {
         const { isSuccess, data, errorMsg } = res.data
         if (isSuccess === false) {
           ElMessage.error(errorMsg)
-          throw new Error()
+          throw new Error(errorMsg)
         }
         if (
           bookUrl === this.readingBook.bookUrl &&
@@ -124,7 +113,7 @@ export const useBookStore = defineStore('book', {
       ) {
         return this.catalog
       }
-      return fetchChapterList_promise
+      return fetchChapterList
     },
     setPopCataVisible(visible: boolean) {
       this.popCataVisible = visible
@@ -135,12 +124,12 @@ export const useBookStore = defineStore('book', {
     setReadingBook(readingBook: typeof this.readingBook) {
       this.readingBook = readingBook
     },
-    /** 只从从后端加载一次web阅读配置 */
+    /** 只加载一次 Web 阅读配置 */
     async loadWebConfig() {
-      if (webReadConfigLoadedDate === undefined) {
-        const _config = await API.getReadConfig()
-        webReadConfigLoadedDate = new Date()
-        return this.setConfig(_config)
+      if (!webReadConfigLoaded) {
+        const config = await API.getReadConfig()
+        webReadConfigLoaded = true
+        return this.setConfig(config)
       }
     },
     setConfig(config?: webReadConfig) {
@@ -155,16 +144,7 @@ export const useBookStore = defineStore('book', {
     setMiniInterface(mini: boolean) {
       this.miniInterface = mini
     },
-    setSearchBooks(books: SearchBook[]) {
-      const shelfBookUrls = new Set(this.shelf.map(book => book.bookUrl))
-      this.searchBooks.push(
-        ...books.filter(book => !shelfBookUrls.has(book.bookUrl)),
-      )
-    },
-    clearSearchBooks() {
-      this.searchBooks = []
-    },
-    /** 1.保存进度到app 2.修改内存中的数据*/
+    /** 1.保存进度到浏览器本地 2.修改内存中的数据 */
     async saveBookProgress() {
       const progress = this.bookProgress
       if (progress === undefined) return
@@ -173,10 +153,8 @@ export const useBookStore = defineStore('book', {
       const shelfRaw = toRaw(this.shelf)
       const findIndex = shelfRaw.findIndex(book => book.bookUrl === bookUrl)
       if (findIndex > -1) {
-        this.shelf[findIndex] = Object.assign({}, shelfRaw[findIndex], progress)
+        this.shelf[findIndex] = { ...shelfRaw[findIndex], ...progress }
       }
-      // 直接关闭浏览器时 http请求可能被取消
-      // return API.saveBookProgress(progress)
       return API.saveBookProgressWithBeacon(progress)
     },
   },

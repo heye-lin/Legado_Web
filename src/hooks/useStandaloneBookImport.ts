@@ -1,4 +1,4 @@
-import API, { isStandaloneMode } from '@api'
+import API from '@api'
 import type { StandaloneBackupData } from '@/api/standalone'
 import type { webReadConfig } from '@/web'
 import {
@@ -19,7 +19,6 @@ type UseStandaloneBookImportOptions = {
   loadingWrapper: (promise: Promise<unknown>) => Promise<unknown>
   reloadShelf: () => Promise<unknown>
   setReadConfig: (config?: webReadConfig) => void
-  clearSearchBooks: () => void
   resetReadingRecent: () => void
 }
 
@@ -27,7 +26,6 @@ export const useStandaloneBookImport = ({
   loadingWrapper,
   reloadShelf,
   setReadConfig,
-  clearSearchBooks,
   resetReadingRecent,
 }: UseStandaloneBookImportOptions) => {
   const fileInput = ref<HTMLInputElement>()
@@ -36,7 +34,7 @@ export const useStandaloneBookImport = ({
   const dragDepth = ref(0)
 
   const importTextFiles = async (files: File[]) => {
-    if (!isStandaloneMode || files.length === 0) return
+    if (files.length === 0) return
 
     const textFiles = files.filter(isTextFile)
     if (textFiles.length === 0) {
@@ -87,28 +85,28 @@ export const useStandaloneBookImport = ({
   }
 
   const handleShelfDragEnter = (event: DragEvent) => {
-    if (!isStandaloneMode || !hasDragFiles(event)) return
+    if (!hasDragFiles(event)) return
     event.preventDefault()
     dragDepth.value += 1
     isDraggingFile.value = true
   }
 
   const handleShelfDragOver = (event: DragEvent) => {
-    if (!isStandaloneMode || !hasDragFiles(event)) return
+    if (!hasDragFiles(event)) return
     event.preventDefault()
     if (event.dataTransfer !== null) event.dataTransfer.dropEffect = 'copy'
     isDraggingFile.value = true
   }
 
   const handleShelfDragLeave = (event: DragEvent) => {
-    if (!isStandaloneMode || !hasDragFiles(event)) return
+    if (!hasDragFiles(event)) return
     event.preventDefault()
     dragDepth.value = Math.max(0, dragDepth.value - 1)
     isDraggingFile.value = dragDepth.value > 0
   }
 
   const handleShelfDrop = async (event: DragEvent) => {
-    if (!isStandaloneMode || !hasDragFiles(event)) return
+    if (!hasDragFiles(event)) return
     event.preventDefault()
     dragDepth.value = 0
     isDraggingFile.value = false
@@ -148,7 +146,6 @@ export const useStandaloneBookImport = ({
 
       const config = await API.getReadConfig()
       setReadConfig(config)
-      clearSearchBooks()
       resetReadingRecent()
       clearReadingSession()
       await reloadShelf()
@@ -180,7 +177,6 @@ export const useStandaloneBookImport = ({
         return
       }
 
-      clearSearchBooks()
       resetReadingRecent()
       clearReadingSession()
       setReadConfig(await API.getReadConfig())

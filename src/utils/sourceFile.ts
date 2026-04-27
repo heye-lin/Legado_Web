@@ -1,4 +1,4 @@
-import API, { isStandaloneMode } from '@api'
+import API from '@api'
 import type { Source } from '@/source'
 import { downloadJson, formatFileDate, readJsonFile } from '@/utils/jsonFile'
 import { parseSourcesForKind } from '@/utils/sourceImport'
@@ -11,8 +11,6 @@ export const persistSourceConfig = async (
   sources: Source[],
   kind: SourceKind,
 ) => {
-  if (!isStandaloneMode) return
-
   const { data } = await API.saveSources(sources, kind)
   if (!data.isSuccess) throw new Error(data.errorMsg)
 }

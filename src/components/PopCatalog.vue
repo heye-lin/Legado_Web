@@ -31,7 +31,7 @@ const store = useBookStore()
 const { catalog, popCataVisible, miniInterface } = storeToRefs(store)
 
 // 主题
-const isNight = computed(() => store.theme)
+const isNight = computed(() => store.isNight)
 const theme = computed(() => store.theme)
 const popupTheme = computed(() => {
   return {
@@ -74,16 +74,20 @@ const virtualListIndex = computed(() => {
   // PC 端 virtualListItem 有 2 个章节
   return Math.floor(index / 2)
 })
-onUpdated(() => {
-  // DOM 更新触发 ResizeObserver，更新虚拟列表内部的 sizes Map
-  if (!popCataVisible.value) return
-  virtualListRef.value.scrollToIndex(virtualListIndex.value)
-})
+watch(
+  [popCataVisible, virtualListIndex],
+  async ([visible, index]) => {
+    if (!visible) return
+    await nextTick()
+    virtualListRef.value?.scrollToIndex(index)
+  },
+  { flush: 'post' },
+)
 
 // 点击加载对应章节内容
 const emit = defineEmits(['getContent'])
 const gotoChapter = (chapter: BookChapter) => {
-  const chapterIndex = catalog.value.indexOf(chapter)
+  const chapterIndex = chapter.index
   currentChapterIndex.value = chapterIndex
   store.setPopCataVisible(false)
   store.setContentLoading(true)

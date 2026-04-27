@@ -99,7 +99,7 @@ const pull = () => {
         })
       } else {
         ElMessage({
-          message: data.errorMsg ?? '后端错误',
+          message: data.errorMsg ?? '源数据错误',
           type: 'error',
         })
       }
@@ -273,6 +273,17 @@ const hotkeysDialogVisible = ref(true)
 const recordKeyDowning = ref(false)
 
 const recordKeyDownIndex = ref(-1)
+const defaultHotkeysFilter = hotkeys.filter
+const boundHotKeyCombos = new Set<string>()
+
+const unbindRecorderHotkeys = () => {
+  hotkeys.unbind('*')
+}
+
+const unbindActionHotkeys = () => {
+  boundHotKeyCombos.forEach(combo => hotkeys.unbind(combo))
+  boundHotKeyCombos.clear()
+}
 
 const stopRecordKeyDown = () => {
   if (!recordKeyDowning.value) {
@@ -283,15 +294,17 @@ const stopRecordKeyDown = () => {
 
 watch(
   hotkeysDialogVisible,
-  visible => {
+  (visible, _, onCleanup) => {
     if (!visible) {
-      hotkeys.unbind('*')
+      unbindRecorderHotkeys()
       readHotkeysConfig()
+      unbindActionHotkeys()
       bindHotKeys()
       return
     }
     readHotkeysConfig()
-    hotkeys.unbind()
+    unbindActionHotkeys()
+    unbindRecorderHotkeys()
     /** 监听按键 */
     hotkeys('*', event => {
       event.preventDefault()
@@ -303,6 +316,7 @@ watch(
       if (recordKeyDowning.value && recordKeyDownIndex.value > -1)
         buttons.value[recordKeyDownIndex.value].hotKeys = pressedKeys
     })
+    onCleanup(unbindRecorderHotkeys)
   },
   { immediate: true },
 )
@@ -331,10 +345,12 @@ const bindHotKeys = () => {
   hotkeys.filter = () => true
   buttons.value.forEach(({ hotKeys, action }) => {
     if (hotKeys.length === 0) return
-    hotkeys(hotKeys.join('+'), event => {
+    const combo = hotKeys.join('+')
+    hotkeys(combo, event => {
       event.preventDefault()
       action.call(null)
     })
+    boundHotKeyCombos.add(combo)
   })
 }
 const saveHotkeysConfig = (config: string[][]) => {
@@ -370,6 +386,12 @@ onMounted(() => {
   if (readHotkeysConfig()) {
     hotkeysDialogVisible.value = false
   }
+})
+
+onUnmounted(() => {
+  unbindRecorderHotkeys()
+  unbindActionHotkeys()
+  hotkeys.filter = defaultHotkeysFilter
 })
 </script>
 

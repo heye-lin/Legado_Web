@@ -3,7 +3,6 @@ import type {
   Book,
   BookChapter,
   BookProgress,
-  SearchBook,
 } from '@/book'
 import type { BookSource, RssSource, Source } from '@/source'
 import type { webReadConfig } from '@/web'
@@ -794,28 +793,6 @@ const placeholderCover = (label: string) => {
   return `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(svg)}`
 }
 
-const toSearchBook = (book: Book): SearchBook => ({
-  name: book.name,
-  author: book.author,
-  bookUrl: book.bookUrl,
-  kind: book.kind,
-  wordCount: book.wordCount,
-  variable: book.variable,
-  origin: book.origin,
-  originName: book.originName,
-  type: book.type,
-  coverUrl: book.coverUrl,
-  intro: book.intro,
-  latestChapterTitle: book.latestChapterTitle,
-  tocUrl: book.tocUrl,
-  time: Date.now(),
-  originOrder: book.originOrder,
-  chapterWordCountText: book.wordCount,
-  // The upstream d.ts keeps the original Android-side field name.
-  chapterWordCount: 0,
-  respondTime: 0,
-})
-
 const sameBook = (book: BaseBook, progress: BookProgress) =>
   progress.bookUrl.length > 0
     ? book.bookUrl === progress.bookUrl
@@ -832,8 +809,10 @@ const saveReadConfig = async (config: webReadConfig): ApiResult<string> => {
 const saveBookProgress = async (
   bookProgress: BookProgress,
 ): ApiResult<string> => {
-  const books = await getAllBooks()
-  const book = books.find(item => sameBook(item, bookProgress))
+  const book =
+    bookProgress.bookUrl.length > 0
+      ? await getBook(bookProgress.bookUrl)
+      : (await getAllBooks()).find(item => sameBook(item, bookProgress))
   if (book === undefined) return ok('没有需要保存的本地进度')
 
   await readwriteStore(BOOK_STORE, async store => {
@@ -863,30 +842,6 @@ const getBookContent = async (
   const chapter = await getChapterRecord(bookUrl, chapterIndex)
   if (chapter === undefined) return fail('章节不存在或已被删除')
   return ok(chapter.content)
-}
-
-const search = async (
-  searchKey: string,
-  onReceive: (data: SearchBook[]) => void,
-  onFinish: () => void,
-) => {
-  const key = searchKey.trim().toLocaleLowerCase()
-  const books = await getAllBooks()
-  const result = books
-    .filter(book => {
-      const text =
-        `${book.name} ${book.author} ${book.kind ?? ''}`.toLocaleLowerCase()
-      return text.includes(key)
-    })
-    .map(toSearchBook)
-  onReceive(result)
-  onFinish()
-}
-
-const saveBook = async (book: BaseBook): ApiResult<string> => {
-  const existed = await getBook(book.bookUrl)
-  if (existed !== undefined) return ok('书籍已在本地书架')
-  return fail('纯 Web 模式只能直接保存已导入到浏览器的书籍')
 }
 
 const deleteBook = async (book: BaseBook): ApiResult<string> => {
@@ -967,15 +922,26 @@ const debug = (
 ) => {
   void kind
   const messages = [
-    '纯 Web 模式已接管源编辑器，不再依赖阅读 App。',
+    '纯 Web 模式已接管源编辑器，不再依赖外部服务。',
     `当前源：${sourceUrl || '未填写'}`,
     searchKey ? `搜索关键字：${searchKey}` : '当前订阅源调试没有搜索关键字。',
-    '说明：完整 Legado 规则调试依赖 Android/Rhino 与无 CORS 网络访问能力；浏览器纯前端只能调试允许 CORS 的站点，规则引擎需要后续按 Web 标准单独实现。',
+    '说明：完整 Legado 规则调试依赖原生规则引擎与无 CORS 网络访问能力；浏览器纯前端只能调试允许 CORS 的站点，规则引擎需要后续按 Web 标准单独实现。',
   ]
+  const timeoutIds: number[] = []
+  const schedule = (callback: () => void, delay: number) => {
+    const timeoutId = window.setTimeout(callback, delay)
+    timeoutIds.push(timeoutId)
+  }
+
   messages.forEach((message, index) => {
-    window.setTimeout(() => onReceive(message), index * 80)
+    schedule(() => onReceive(message), index * 80)
   })
-  window.setTimeout(onFinish, messages.length * 80)
+  schedule(onFinish, messages.length * 80)
+
+  return () => {
+    timeoutIds.forEach(timeoutId => window.clearTimeout(timeoutId))
+    timeoutIds.length = 0
+  }
 }
 
 const getStandaloneSnapshot = () =>
@@ -1083,8 +1049,6 @@ export default {
   getBookShelf,
   getChapterList,
   getBookContent,
-  search,
-  saveBook,
   deleteBook,
   importLocalTextBook,
   exportStandaloneData,

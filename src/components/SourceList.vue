@@ -43,11 +43,7 @@
 <script setup lang="ts">
 import API from '@api'
 import { Folder, Delete, Download, Search } from '@element-plus/icons-vue'
-import {
-  isSourceMatches,
-  getSourceUniqueKey,
-  convertSourcesToMap,
-} from '@utils/source'
+import { isSourceMatches, getSourceUniqueKey } from '@utils/source'
 import VirtualList from 'vue3-virtual-scroll-list'
 import SourceItem from './SourceItem.vue'
 import type { Source } from '@/source'
@@ -70,16 +66,22 @@ const sourcesFiltered = computed<Source[]>(() => {
   if (key === '') return sources.value
   return sources.value.filter(source => isSourceMatches(source, key))
 })
+const filteredSourceKeySet = computed(() =>
+  searchKey.value === ''
+    ? undefined
+    : new Set(sourcesFiltered.value.map(getSourceUniqueKey)),
+)
 // 计算当前筛选关键词下的选中源
 const sourceSelect = computed<Source[]>(() => {
   const urls = sourceUrlSelect.value
   if (urls.length === 0) return []
-  const sourcesFilteredMap =
-    searchKey.value === ''
-      ? store.sourcesMap
-      : convertSourcesToMap(sourcesFiltered.value)
+  const sourcesMap = store.sourcesMap
+  const filteredKeys = filteredSourceKeySet.value
   return urls.reduce((sources, sourceUrl) => {
-    const source = sourcesFilteredMap.get(sourceUrl)
+    if (filteredKeys !== undefined && !filteredKeys.has(sourceUrl)) {
+      return sources
+    }
+    const source = sourcesMap.get(sourceUrl)
     if (source) sources.push(source)
     return sources
   }, [] as Source[])

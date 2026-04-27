@@ -98,22 +98,21 @@ export const isSourceMatches: (source: Source, searchKey: string) => boolean = (
 }
 
 export const convertSourcesToMap = (sources: Source[]): Map<string, Source> => {
-  const map = new Map()
+  const map = new Map<string, Source>()
   sources.forEach(source => map.set(getSourceUniqueKey(source), source))
   return map
 }
+
+const isObjectRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null && !Array.isArray(value)
 
 export const normalizeSource = (source: object) => {
   const record = source as Record<string, unknown>
   for (const key in record) {
     const value = record[key]
-    if (
-      value === '' ||
-      value === null ||
-      (typeof value === 'string' && !value.trim())
-    ) {
+    if (value === null || (typeof value === 'string' && value.trim() === '')) {
       delete record[key]
-    } else if (typeof value === 'object') {
+    } else if (isObjectRecord(value)) {
       normalizeSource(value)
     }
   }

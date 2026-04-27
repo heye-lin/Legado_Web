@@ -1,6 +1,6 @@
 # 阅读 Web 端
 
-这是 `legado` 的 Web 前端。当前版本默认以**纯 Web 本地模式**运行，不再要求 Android App 提供后端服务。
+这是 `legado` 的纯 Web 前端。当前版本直接在浏览器本地运行，不再要求 Android App 或后端 WebService。
 
 ## 路由
 
@@ -25,7 +25,7 @@ http://localhost:8080/
 
 能力：
 
-- 不依赖 Android App。
+- 不依赖 Android App 或后端服务。
 - 书籍、章节、阅读进度：保存在浏览器 IndexedDB。
 - 阅读配置、书源配置、订阅源配置：保存在浏览器 localStorage。
 - 书架页支持导入本地 `.txt` 文件，也支持拖拽 TXT 到书架区域导入。
@@ -35,24 +35,9 @@ http://localhost:8080/
 
 限制：
 
-- 纯浏览器不能绕过目标网站 CORS；远程站点抓取、完整 Legado 规则调试、Android/Rhino 专属能力需要后续单独实现 Web 规则引擎或配套 Web 后端。
+- 纯浏览器不能绕过目标网站 CORS；远程站点抓取、完整 Legado 规则调试和 Rhino 专属能力需要后续单独实现 Web 规则引擎或配套 Web 后端。
 - 当前纯 Web 阅读能力以本地 TXT 书籍为主。
 - 备份文件是 JSON 明文，请自行保存好；浏览器清站点数据会删除 IndexedDB/localStorage 中的本地书库。
-
-## 可选：旧 App WebService 模式
-
-如果仍要连接 Android App 的 Web 服务，可创建 `.env.development`：
-
-```bash
-VITE_STANDALONE=false
-VITE_API=http://手机IP:1122
-```
-
-然后启动：
-
-```bash
-pnpm dev
-```
 
 ## 构建
 
@@ -65,8 +50,6 @@ pnpm build
 ```text
 dist/
 ```
-
-本地执行 `pnpm build` 时不会自动复制到 Android assets；只有 GitHub Actions 环境会触发 `scripts/sync.js` 的复制逻辑。
 
 ## 兼容性
 

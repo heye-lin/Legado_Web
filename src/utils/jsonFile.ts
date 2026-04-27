@@ -39,7 +39,7 @@ export const readTextFile = async (file: File) => {
   }
 }
 
-export const parseJsonText = (content: string): unknown => {
+const parseJsonText = (content: string): unknown => {
   try {
     return JSON.parse(content)
   } catch (error) {

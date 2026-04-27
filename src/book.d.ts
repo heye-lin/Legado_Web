@@ -63,23 +63,6 @@ export type Book = BaseBook & {
   //同步时间
   syncTime: number
 }
-export type SearchBook = BaseBook & {
-  /** 书源 */
-  origin: string
-  originName: string
-  /** BookType */
-  type: number
-  coverUrl?: string
-  intro?: string
-  latestChapterTitle?: string
-  /** 目录页Url (toc=table of Contents) */
-  tocUrl: string
-  time: number
-  originOrder: number
-  chapterWordCountText?: string
-  chapterWordCount: number
-  respondTime: number
-}
 export type BookProgress = Pick<
   Book,
   | 'name'

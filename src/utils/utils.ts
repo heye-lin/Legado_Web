@@ -2,8 +2,7 @@ import { formatDate } from '@vueuse/shared'
 export const isNullOrBlank = (string: string | null | undefined | number) =>
   string === null ||
   string === undefined ||
-  (string as string).length === 0 ||
-  /^\s+$/.test(string as string)
+  (typeof string === 'string' && string.trim().length === 0)
 
 export const isLegadoUrl = (/** @type {string} */ url: string) =>
   /,\s*\{/.test(url) ||
@@ -13,29 +12,8 @@ export const isLegadoUrl = (/** @type {string} */ url: string) =>
     url.startsWith('blob:')
   )
 
-/**
- * 验证输入的URL是否符合阅读后端地址规则
- * @param allowedProtocols 允许的协议，默认`["https:", "http:"]`
- */
-export const validatorHttpUrl = (
-  http_url: string | URL,
-  allowedProtocols: string[] = ['https:', 'http:'],
-) => {
-  try {
-    const url = new URL(http_url)
-    const { protocol } = url
-    if (!allowedProtocols.includes(protocol))
-      throw new Error(
-        `Expected protocol ${allowedProtocols.join('/')}, but ${protocol}`,
-      )
-    return true
-  } catch {
-    return false
-  }
-}
-
 export const dateFormat = (/** @type {number} */ t: number) => {
-  const time = new Date().getTime()
+  const time = Date.now()
   const offset = Math.floor((time - t) / 1000)
   let str = ''
 

@@ -137,10 +137,6 @@ const chapterIndex = computed({
   get: () => store.readingBook.chapterIndex,
   set: value => (store.readingBook.chapterIndex = value),
 })
-const isSearchBook = computed({
-  get: () => store.readingBook.isSearchBook,
-  set: value => (store.readingBook.isSearchBook = value),
-})
 
 // 当前阅读书籍readingBook持久化
 watch(
@@ -281,11 +277,20 @@ const router = useRouter()
 const toShelf = () => {
   router.push('/')
 }
+let toShelfTimer: ReturnType<typeof setTimeout> | undefined
+const scheduleToShelf = () => {
+  if (toShelfTimer !== undefined) clearTimeout(toShelfTimer)
+  toShelfTimer = setTimeout(() => {
+    toShelfTimer = undefined
+    toShelf()
+  }, 500)
+}
 
 // 获取章节内容
 const chapterData = ref<{ index: number; content: string[]; title: string }[]>(
   [],
 )
+let activeContentRequestId = 0
 const noPoint = ref(true)
 const normalizeReadingNumber = (value: string | number | null) => {
   const number = Number(value ?? 0)
@@ -313,10 +318,14 @@ const getContent = (index: number, reloadChapter = true, chapterPos = 0) => {
   }
   const bookUrl = store.readingBook.bookUrl
   const { title, index: chapterIndex } = chapter
+  const requestId = reloadChapter
+    ? ++activeContentRequestId
+    : activeContentRequestId
 
   loadingWrapper(
     API.getBookContent(bookUrl, chapterIndex).then(
       res => {
+        if (requestId !== activeContentRequestId) return
         if (res.data.isSuccess) {
           const data = res.data.data
           const content = data.split(/\n+/)
@@ -335,6 +344,7 @@ const getContent = (index: number, reloadChapter = true, chapterPos = 0) => {
         }
       },
       err => {
+        if (requestId !== activeContentRequestId) return
         const content = ['获取章节内容失败！']
         chapterData.value.push({ index, content, title })
         store.setShowContent(true)
@@ -503,7 +513,8 @@ onMounted(async () => {
     sessionStorage.getItem('isSeachBook') === 'true'
   if (isNullOrBlank(bookUrl) || isNullOrBlank(name)) {
     ElMessage.warning('书籍信息为空，即将自动返回书架页面...')
-    return setTimeout(toShelf, 500)
+    scheduleToShelf()
+    return
   }
   const book: typeof store.readingBook = {
     bookUrl,
@@ -521,7 +532,7 @@ onMounted(async () => {
       .then(chapters => {
         if (chapters.length === 0) {
           ElMessage.warning('书籍目录为空，即将自动返回书架页面...')
-          setTimeout(toShelf, 500)
+          scheduleToShelf()
           return
         }
 
@@ -548,7 +559,7 @@ onMounted(async () => {
         document.title = `${name as string} | ${chapters[book.chapterIndex].title}`
       })
       .catch(() => {
-        setTimeout(toShelf, 500)
+        scheduleToShelf()
       }),
   )
 })
@@ -563,41 +574,12 @@ onUnmounted(() => {
   popCataVisible.value = false
   scrollObserver?.disconnect()
   scrollObserver = null
+  if (toShelfTimer !== undefined) clearTimeout(toShelfTimer)
 })
 
-const addToBookShelfConfirm = async () => {
-  const book = store.readingBook
-  // 阅读的是搜索的书籍 并未在书架
-  if (book.isSearchBook === true) {
-    await ElMessageBox.confirm(`是否将《${book.name}》放入书架？`, '放入书架', {
-      confirmButtonText: '确认',
-      cancelButtonText: '否',
-      type: 'info',
-      /*
-        ElMessageBox.confirm默认在触发hashChange事件时自动关闭
-        按下物理返回键时触发hashChange事件
-        使用router.push("/")则不会触发hashChange事件
-        */
-      closeOnHashChange: false,
-    })
-      .then(() => {
-        //选择是，无动作
-        isSearchBook.value = false
-      })
-      .catch(async () => {
-        //选择否，删除书籍
-        await API.deleteBook(book)
-      })
-      .finally(() => {
-        sessionStorage.removeItem('isSearchBook')
-        sessionStorage.removeItem('isSeachBook')
-      })
-  }
-}
-onBeforeRouteLeave(async (to, from, next) => {
+onBeforeRouteLeave((to, from, next) => {
   // 弹窗时停止响应按键翻页
   window.removeEventListener('keyup', handleKeyPress)
-  await addToBookShelfConfirm()
   next()
 })
 </script>

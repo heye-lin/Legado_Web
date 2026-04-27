@@ -8,7 +8,7 @@ import {
   sourceKindRequiredFields,
 } from './sourceKind'
 
-export const isSourceOfKind = (
+const isSourceOfKind = (
   value: unknown,
   kind: SourceKind = getCurrentSourceKind(),
 ) => {

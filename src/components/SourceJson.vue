@@ -14,7 +14,7 @@ import { useSourceStore } from '@/store'
 
 const store = useSourceStore()
 const sourceString = ref('')
-const update = async (string: string) => {
+const update = (string: string) => {
   try {
     store.changeEditTabSource(JSON.parse(string))
   } catch {
@@ -25,7 +25,7 @@ const update = async (string: string) => {
   }
 }
 
-watchEffect(async () => {
+watchEffect(() => {
   const source = store.editTabSource
   if (Object.keys(source).length > 0) {
     sourceString.value = JSON.stringify(source, null, 4)

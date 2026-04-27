@@ -1,14 +1,14 @@
-import sourceEditor from '../views/SourceEditor.vue'
+const SourceEditor = () => import('../views/SourceEditor.vue')
 
 export const sourceRoutes = [
   {
     path: '/bookSource',
     name: 'book-home',
-    component: sourceEditor,
+    component: SourceEditor,
   },
   {
     path: '/rssSource',
     name: 'rss-home',
-    component: sourceEditor,
+    component: SourceEditor,
   },
 ]

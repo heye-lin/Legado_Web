@@ -9,6 +9,7 @@
     @keydown.enter="startDebug"
   />
   <el-input
+    ref="debugTextRef"
     id="debug-text"
     v-model="printDebug"
     type="textarea"
@@ -20,6 +21,7 @@
 
 <script setup lang="ts">
 import API from '@api'
+import type { InputInstance } from 'element-plus'
 import { Search } from '@element-plus/icons-vue'
 import { isValidSource } from '@/utils/source'
 import { isBookSourceKind, sourceKindFromPath } from '@/utils/sourceKind'
@@ -29,6 +31,9 @@ const route = useRoute()
 
 const printDebug = ref('')
 const searchKey = ref('')
+const debugTextRef = ref<InputInstance>()
+let debugCancel: (() => void) | undefined
+let debugRunId = 0
 
 watch(
   () => store.isDebugging,
@@ -37,12 +42,23 @@ watch(
   },
 )
 
+const cancelCurrentDebug = () => {
+  debugCancel?.()
+  debugCancel = undefined
+}
+
 const appendDebugMsg = (msg: string) => {
-  const debugDom = document.querySelector('#debug-text')
-  debugDom!.scrollTop = debugDom!.scrollHeight
-  printDebug.value += msg + '\n'
+  printDebug.value += `${msg}\n`
+  void nextTick(() => {
+    const textarea = debugTextRef.value?.textarea
+    if (textarea) {
+      textarea.scrollTop = textarea.scrollHeight
+    }
+  })
 }
 const startDebug = async () => {
+  const currentRunId = ++debugRunId
+  cancelCurrentDebug()
   printDebug.value = ''
   const source = store.currentSource
   if (!isValidSource(source)) {
@@ -56,20 +72,31 @@ const startDebug = async () => {
   try {
     await API.saveSource(source, sourceKind.value)
   } catch (e) {
-    store.debugFinish()
+    if (currentRunId === debugRunId) store.debugFinish()
     throw e
   }
-  API.debug(
+  if (currentRunId !== debugRunId) return
+  debugCancel = API.debug(
     store.currentSourceUrl,
     searchKey.value || store.searchKey,
     appendDebugMsg,
-    store.debugFinish,
+    () => {
+      if (currentRunId !== debugRunId) return
+      debugCancel = undefined
+      store.debugFinish()
+    },
     sourceKind.value,
   )
 }
 
 const sourceKind = computed(() => sourceKindFromPath(route.fullPath))
 const isBookSource = computed(() => isBookSourceKind(sourceKind.value))
+
+onUnmounted(() => {
+  debugRunId += 1
+  cancelCurrentDebug()
+  store.debugFinish()
+})
 </script>
 
 <style lang="scss" scoped>

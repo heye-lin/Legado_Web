@@ -1,8 +1,6 @@
-import type { Book, SearchBook } from '@/book'
+import type { Book } from '@/book'
 
 export { getErrorMessage } from './jsonFile'
-
-export type BookshelfBook = Book | SearchBook
 
 export type ReadingRecentBook = {
   name: string
@@ -117,19 +115,10 @@ export const filterShelfBooks = (books: Book[], keyword: string) => {
 export const hasBookOnShelf = (books: Book[], bookUrl: string) =>
   books.some(book => book.bookUrl === bookUrl)
 
-export const isSearchBook = (book: BookshelfBook): book is SearchBook =>
-  'respondTime' in book
-
-export const getBookReadPosition = (book: BookshelfBook) => {
-  if (isSearchBook(book)) {
-    return { chapterIndex: 0, chapterPos: 0 }
-  }
-
-  return {
-    chapterIndex: book.durChapterIndex,
-    chapterPos: book.durChapterPos,
-  }
-}
+export const getBookReadPosition = (book: Book) => ({
+  chapterIndex: book.durChapterIndex,
+  chapterPos: book.durChapterPos,
+})
 
 export const isTextFile = (file: File) =>
   file.name.toLocaleLowerCase().endsWith('.txt') || file.type === 'text/plain'

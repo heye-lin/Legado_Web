@@ -45,17 +45,10 @@
         <div class="setting-wrapper">
           <div class="setting-title">基本设定</div>
           <div class="setting-item">
-            <el-tag
-              :type="connectType"
-              size="large"
-              class="setting-connect"
-              :class="{ 'no-point': newConnect }"
-              @click="setLegadoRemoteUrl"
-            >
-              {{ connectStatus }}
+            <el-tag type="success" size="large" class="setting-connect">
+              纯 Web 本地模式
             </el-tag>
             <el-button
-              v-if="isStandaloneMode"
               class="standalone-action-button"
               type="primary"
               size="small"
@@ -64,7 +57,6 @@
               导入 TXT
             </el-button>
             <el-button
-              v-if="isStandaloneMode"
               class="standalone-action-button"
               size="small"
               @click="exportStandaloneBackup"
@@ -72,7 +64,6 @@
               导出备份
             </el-button>
             <el-button
-              v-if="isStandaloneMode"
               class="standalone-action-button"
               size="small"
               @click="backupFileInput?.click()"
@@ -80,7 +71,6 @@
               恢复备份
             </el-button>
             <el-button
-              v-if="isStandaloneMode"
               class="standalone-action-button"
               type="danger"
               size="small"
@@ -93,7 +83,7 @@
       </div>
       <div class="bottom-icons">
         <a
-          href="https://github.com/gedoor/legado_web_bookshelf"
+          href="https://github.com/heye-lin/Legado_Web"
           target="_blank"
         >
           <div class="bottom-icon">
@@ -140,7 +130,6 @@
         :books="books"
         @bookClick="handleBookClick"
         @bookDelete="handleBookDelete"
-        :isSearch="isSearching"
       ></book-items>
       <div v-if="isDraggingFile" class="drag-import-mask">
         <div class="drag-import-title">释放鼠标导入 TXT</div>
@@ -158,18 +147,9 @@ import githubUrl from '@/assets/imgs/github.png'
 import { useLoading } from '@/hooks/loading'
 import { useStandaloneBookImport } from '@/hooks/useStandaloneBookImport'
 import { Search as SearchIcon } from '@element-plus/icons-vue'
-import { baseURL_localStorage_key } from '@/api/axios'
-import API, {
-  legado_http_entry_point,
-  parseLegadoHttpUrlWithDefault,
-  setApiEntryPoint,
-  isStandaloneMode,
-} from '@api'
-import { validatorHttpUrl } from '@/utils/utils'
-import type { Book, SearchBook } from '@/book'
-import type { webReadConfig } from '@/web'
+import API from '@api'
+import type { Book } from '@/book'
 import {
-  type BookshelfBook,
   type ReadingRecentBook,
   clearReadingSession,
   clearStoredReadingRecent,
@@ -178,7 +158,6 @@ import {
   getBookReadPosition,
   getErrorMessage,
   hasBookOnShelf,
-  isSearchBook as isSearchResultBook,
   loadStoredReadingRecent,
   saveReadingRecent,
   saveReadingSession,
@@ -199,165 +178,27 @@ const restoreReadingRecent = () => {
   if (storedRecent !== undefined) readingRecent.value = storedRecent
 }
 
-/** shortcuts of `store.setConfig` */
-const applyReadConfig = (config?: webReadConfig) => {
-  try {
-    if (config !== undefined) store.setConfig(config)
-  } catch {
-    ElMessage.info('阅读界面配置解析错误')
-  }
-}
-
 const shelfWrapper = ref<HTMLElement>()
-const { showLoading, closeLoading, loadingWrapper, isLoading } = useLoading(
+const { loadingWrapper, isLoading } = useLoading(
   shelfWrapper,
   '正在获取书籍信息',
 )
 
-// 书架书籍和在线书籍搜索
-const books = shallowRef<Book[] | SearchBook[]>([])
+// 书架书籍和本地搜索
 const searchWord = ref('')
-const searchPlaceholder = computed(() =>
-  isStandaloneMode
-    ? '搜索本地书架，点击“导入 TXT”添加书籍'
-    : '搜索书籍，在线书籍自动加入书架',
+const searchPlaceholder = '搜索本地书架，点击“导入 TXT”添加书籍'
+const books = computed(() =>
+  searchWord.value === ''
+    ? shelf.value
+    : filterShelfBooks(shelf.value, searchWord.value),
 )
-const isSearching = ref(false)
-let activeOnlineSearchId = 0
-
-const isActiveOnlineSearch = (searchId: number, searchKey: string) =>
-  searchId === activeOnlineSearchId &&
-  isSearching.value &&
-  searchWord.value === searchKey
-
-const finishStaleOnlineSearch = (searchId: number, searchKey: string) => {
-  if (searchId !== activeOnlineSearchId || searchWord.value === searchKey) {
-    return
-  }
-  if (isLoading.value) closeLoading()
-  isSearching.value = false
-}
-
 const showStandaloneEmptyState = computed(
-  () =>
-    isStandaloneMode &&
-    !isLoading.value &&
-    !isSearching.value &&
-    shelf.value.length === 0,
+  () => !isLoading.value && shelf.value.length === 0,
 )
 
-watchEffect(() => {
-  if (isSearching.value && searchWord.value !== '') return
-  isSearching.value = false
-  books.value =
-    searchWord.value === ''
-      ? shelf.value
-      : filterShelfBooks(shelf.value, searchWord.value)
-})
-
-const searchLocalShelf = () => {
-  isSearching.value = false
-  books.value = filterShelfBooks(shelf.value, searchWord.value)
-  if (books.value.length === 0) ElMessage.info('本地书架中没有匹配书籍')
-}
-
-//搜索在线书籍
 const searchBook = () => {
   if (searchWord.value === '') return
-  if (isStandaloneMode) {
-    searchLocalShelf()
-    return
-  }
-  const searchKey = searchWord.value
-  const searchId = ++activeOnlineSearchId
-  books.value = []
-  store.clearSearchBooks()
-  showLoading()
-  isSearching.value = true
-  API.search(
-    searchKey,
-    searchBooks => {
-      if (!isActiveOnlineSearch(searchId, searchKey)) {
-        finishStaleOnlineSearch(searchId, searchKey)
-        return
-      }
-      if (isLoading.value) closeLoading()
-      try {
-        store.setSearchBooks(searchBooks)
-        books.value = store.searchBooks
-      } catch (e) {
-        ElMessage.error('后端数据错误')
-        throw e
-      }
-    },
-    () => {
-      if (!isActiveOnlineSearch(searchId, searchKey)) {
-        finishStaleOnlineSearch(searchId, searchKey)
-        return
-      }
-      closeLoading()
-      if (books.value.length === 0) {
-        ElMessage.info('搜索结果为空')
-      }
-    },
-  )
-}
-
-//连接状态
-const connectionStore = useConnectionStore()
-const { connectStatus, connectType, newConnect } = storeToRefs(connectionStore)
-
-const setLegadoRemoteUrl = () => {
-  if (isStandaloneMode) {
-    ElMessageBox.alert(
-      '当前是纯 Web 本地模式：书籍、章节、阅读进度、阅读配置和源配置都保存在浏览器 IndexedDB/localStorage 中；不需要 Android App，也不会连接后端。',
-      '纯 Web 模式',
-      { confirmButtonText: '知道了' },
-    )
-    return
-  }
-  ElMessageBox.prompt(
-    '请输入 后端地址 ( 如：http://127.0.0.1:9527 或者通过内网穿透的地址)',
-    '提示',
-    {
-      confirmButtonText: '确定',
-      cancelButtonText: '取消',
-      inputPlaceholder: legado_http_entry_point,
-      inputValidator: value => validatorHttpUrl(value),
-      inputErrorMessage: '输入的格式不对',
-      beforeClose: (action, instance, done) => {
-        if (action === 'confirm') {
-          connectionStore.setNewConnect(true)
-          instance.confirmButtonLoading = true
-          instance.confirmButtonText = '校验中……'
-          const url = new URL(instance.inputValue).toString()
-          API.getReadConfig(url)
-            .then(function (config) {
-              connectionStore.setNewConnect(false)
-              applyReadConfig(config)
-              instance.confirmButtonLoading = false
-              store.clearSearchBooks()
-              setApiEntryPoint(...parseLegadoHttpUrlWithDefault(url))
-              if (url === location.origin) {
-                localStorage.removeItem(baseURL_localStorage_key)
-              } else {
-                localStorage.setItem(baseURL_localStorage_key, url)
-              }
-              store.loadBookShelf(true)
-              done()
-            })
-            .catch(function (error) {
-              connectionStore.setNewConnect(false)
-              instance.confirmButtonLoading = false
-              instance.confirmButtonText = '确定'
-              throw error
-            })
-        } else {
-          done()
-        }
-      },
-    },
-  )
+  if (books.value.length === 0) ElMessage.info('本地书架中没有匹配书籍')
 }
 
 const {
@@ -376,12 +217,11 @@ const {
   loadingWrapper,
   reloadShelf: () => store.loadBookShelf(true),
   setReadConfig: config => store.setConfig(config),
-  clearSearchBooks: () => store.clearSearchBooks(),
   resetReadingRecent,
 })
 
 const router = useRouter()
-const handleBookDelete = async (book: BookshelfBook) => {
+const handleBookDelete = async (book: Book) => {
   try {
     await ElMessageBox.confirm(
       `确定从本地书架删除《${book.name}》？`,
@@ -412,24 +252,9 @@ const handleBookDelete = async (book: BookshelfBook) => {
   }
 }
 
-const handleBookClick = async (book: BookshelfBook) => {
-  const isSearchResult = isSearchResultBook(book)
-  if (isSearchResult) {
-    const result = await API.saveBook(book)
-    if (!result.data.isSuccess) {
-      ElMessage.error(result.data.errorMsg)
-      return
-    }
-  }
+const handleBookClick = (book: Book) => {
   const { chapterIndex, chapterPos } = getBookReadPosition(book)
-  toDetail(
-    book.bookUrl,
-    book.name,
-    book.author,
-    chapterIndex,
-    chapterPos,
-    isSearchResult,
-  )
+  toDetail(book.bookUrl, book.name, book.author, chapterIndex, chapterPos)
 }
 
 const toDetail = (
@@ -442,10 +267,10 @@ const toDetail = (
   fromReadRecentClick = false,
 ) => {
   if (bookName === '尚无阅读记录') return
-  // 最近书籍不再书架上 自动搜索
   if (fromReadRecentClick && !hasBookOnShelf(shelf.value, bookUrl)) {
-    searchWord.value = bookName
-    searchBook()
+    ElMessage.warning('最近阅读的书籍已不在本地书架，请重新导入 TXT')
+    resetReadingRecent()
+    clearReadingSession()
     return
   }
 
@@ -468,7 +293,6 @@ const toDetail = (
 const loadShelf = async () => {
   await store.loadWebConfig()
   await store.saveBookProgress()
-  //确保各种网络情况下同步请求先完成
   await store.loadBookShelf(true)
 }
 

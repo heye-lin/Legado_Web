@@ -1,8 +1,6 @@
 import { fileURLToPath, URL } from "node:url";
 import { defineConfig } from "vite";
 import vue from "@vitejs/plugin-vue";
-import Icons from "unplugin-icons/vite";
-import IconsResolver from "unplugin-icons/resolver";
 import AutoImport from "unplugin-auto-import/vite";
 import Components from "unplugin-vue-components/vite";
 import { ElementPlusResolver } from "unplugin-vue-components/resolvers";
@@ -19,25 +17,12 @@ export default defineConfig(({ mode }) => {
         eslintrc: {
           //enabled: true,
         },
-        resolvers: [
-          ElementPlusResolver(),
-          IconsResolver({
-            prefix: "Icon",
-          }),
-        ],
+        resolvers: [ElementPlusResolver()],
         dts: "./src/auto-imports.d.ts",
       }),
       Components({
-        resolvers: [
-          ElementPlusResolver(),
-          IconsResolver({
-            enabledCollections: ["ep"],
-          }),
-        ],
+        resolvers: [ElementPlusResolver()],
         dts: "./src/components.d.ts",
-      }),
-      Icons({
-        autoInstall: true,
       }),
     ],
     base: mode === "development" ? "/" : "./",

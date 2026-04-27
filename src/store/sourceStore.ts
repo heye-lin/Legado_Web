@@ -37,7 +37,7 @@ export const useSourceStore = defineStore('source', {
       currentSourceKind,
       bookSources: shallowRef([] as BookSource[]), // 临时存放所有书源,
       rssSources: shallowRef([] as RssSource[]), // 临时存放所有订阅源
-      savedSources: [] as Source[], // 批量保存到阅读app成功的源
+      savedSources: [] as Source[], // 批量保存成功的源
       currentSource: cloneSource(getEmptySource(currentSourceKind)) as Source, // 当前编辑的源
       currentTab: localStorage.getItem('tabName') || 'editTab',
       editTabSource: {} as Source, // 生成序列化的json数据
@@ -105,13 +105,13 @@ export const useSourceStore = defineStore('source', {
     //删除源
     deleteSources(data: Source[], kind?: SourceKind) {
       const targetKind = kind ?? this.currentSourceKind
-      const sources: Source[] = isBookSourceKind(targetKind)
-        ? this.bookSources
-        : this.rssSources
-      data.forEach(source => {
-        const index = sources.indexOf(source)
-        if (index > -1) sources.splice(index, 1)
-      })
+      const deleteKeys = new Set(data.map(getSourceUniqueKey))
+      const sources = (
+        isBookSourceKind(targetKind) ? this.bookSources : this.rssSources
+      ).filter(
+        source => !deleteKeys.has(getSourceUniqueKey(source)),
+      )
+      this.saveSources(sources, targetKind)
     },
     //保存当前编辑源
     saveCurrentSource() {
