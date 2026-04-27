@@ -73,9 +73,9 @@ const sourcesFiltered = computed<Source[]>(() => {
 // 计算当前筛选关键词下的选中源
 const sourceSelect = computed<Source[]>(() => {
   const urls = sourceUrlSelect.value
-  if (urls.length == 0) return []
+  if (urls.length === 0) return []
   const sourcesFilteredMap =
-    searchKey.value == ''
+    searchKey.value === ''
       ? store.sourcesMap
       : convertSourcesToMap(sourcesFiltered.value)
   return urls.reduce((sources, sourceUrl) => {
@@ -85,19 +85,24 @@ const sourceSelect = computed<Source[]>(() => {
   }, [] as Source[])
 })
 
-const deleteSelectSources = () => {
+const deleteSelectSources = async () => {
   const kind = getCurrentSourceKind()
-  const sourceSelectValue = sourceSelect.value
-  API.deleteSource(sourceSelectValue, kind).then(({ data }) => {
-    if (!data.isSuccess) return ElMessage.error(data.errorMsg)
-    store.deleteSources(sourceSelectValue, kind)
-    const sourceUrlSelectRawValue = toRaw(sourceUrlSelect.value)
-    sourceSelectValue.forEach(source => {
-      const index = sourceUrlSelectRawValue.indexOf(getSourceUniqueKey(source))
-      if (index > -1) sourceUrlSelectRawValue.splice(index, 1)
-    })
-    sourceUrlSelect.value = sourceUrlSelectRawValue
-  })
+  const selectedSources = sourceSelect.value
+  try {
+    const { data } = await API.deleteSource(selectedSources, kind)
+    if (!data.isSuccess) {
+      ElMessage.error(data.errorMsg)
+      return
+    }
+
+    store.deleteSources(selectedSources, kind)
+    const deletedUrls = new Set(selectedSources.map(getSourceUniqueKey))
+    sourceUrlSelect.value = sourceUrlSelect.value.filter(
+      url => !deletedUrls.has(url),
+    )
+  } catch (error) {
+    ElMessage.error(`删除源失败：${getErrorMessage(error)}`)
+  }
 }
 const clearAllSources = async () => {
   const kind = getCurrentSourceKind()

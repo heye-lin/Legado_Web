@@ -37,7 +37,7 @@ export const useBookStore = defineStore('book', {
   },
   getters: {
     bookProgress: (state): BookProgress | undefined => {
-      if (state.catalog.length == 0) return
+      if (state.catalog.length === 0) return
       const { bookUrl, chapterIndex, chapterPos, name, author } =
         state.readingBook
       const title = state.catalog[chapterIndex]?.title
@@ -55,7 +55,7 @@ export const useBookStore = defineStore('book', {
     theme: state => {
       return state.config.theme
     },
-    isNight: state => state.config.theme == 6,
+    isNight: state => state.config.theme === 6,
   },
   actions: {
     /** 从数据源强制刷新书架书籍 */
@@ -91,7 +91,7 @@ export const useBookStore = defineStore('book', {
         void this.refreshBookShelf()
         return this.shelf
       }
-      return await this.refreshBookShelf()
+      return this.refreshBookShelf()
     },
     /** 从后端加载书籍目录，优先返回内存缓存 */
     async loadWebCatalog(
@@ -123,9 +123,8 @@ export const useBookStore = defineStore('book', {
         this.catalog.length - 1 >= chapterIndex
       ) {
         return this.catalog
-      } else {
-        return await fetchChapterList_promise
       }
+      return fetchChapterList_promise
     },
     setPopCataVisible(visible: boolean) {
       this.popCataVisible = visible
@@ -156,35 +155,29 @@ export const useBookStore = defineStore('book', {
     setMiniInterface(mini: boolean) {
       this.miniInterface = mini
     },
-    async setSearchBooks(books: SearchBook[]) {
-      books.forEach(book => {
-        const isNotOnShelf = this.shelf.every(
-          item => item.bookUrl !== book.bookUrl,
-        )
-        if (isNotOnShelf === true) {
-          this.searchBooks.push(book)
-        }
-      })
+    setSearchBooks(books: SearchBook[]) {
+      const shelfBookUrls = new Set(this.shelf.map(book => book.bookUrl))
+      this.searchBooks.push(
+        ...books.filter(book => !shelfBookUrls.has(book.bookUrl)),
+      )
     },
     clearSearchBooks() {
       this.searchBooks = []
     },
     /** 1.保存进度到app 2.修改内存中的数据*/
     async saveBookProgress() {
-      if (!this.bookProgress) return Promise.resolve()
+      const progress = this.bookProgress
+      if (progress === undefined) return
+
       const { bookUrl } = this.readingBook
       const shelfRaw = toRaw(this.shelf)
       const findIndex = shelfRaw.findIndex(book => book.bookUrl === bookUrl)
       if (findIndex > -1) {
-        this.shelf[findIndex] = Object.assign(
-          {},
-          shelfRaw[findIndex],
-          this.bookProgress,
-        )
+        this.shelf[findIndex] = Object.assign({}, shelfRaw[findIndex], progress)
       }
       // 直接关闭浏览器时 http请求可能被取消
-      // return API.saveBookProgress(this.bookProgress)
-      return API.saveBookProgressWithBeacon(this.bookProgress)
+      // return API.saveBookProgress(progress)
+      return API.saveBookProgressWithBeacon(progress)
     },
   },
 })

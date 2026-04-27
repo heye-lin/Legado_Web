@@ -5,7 +5,7 @@
     :value="sourceUrl"
     :class="{
       error: isSaveError,
-      edit: sourceUrl == currentSourceUrl,
+      edit: sourceUrl === currentSourceUrl,
     }"
   >
     {{ getSourceName(source) }}
@@ -32,7 +32,7 @@ const handleSourceClick = (source: Source) => {
 }
 const isSaveError = computed(() => {
   const map = store.savedSourcesMap
-  if (map.size == 0) return false
+  if (map.size === 0) return false
   return !map.has(sourceUrl.value)
 })
 </script>

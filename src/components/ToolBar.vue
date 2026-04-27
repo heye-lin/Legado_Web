@@ -50,7 +50,7 @@
               <el-text>+</el-text>
             </span>
           </div>
-          <span v-if="button.hotKeys.length == 0">未设置</span>
+          <span v-if="button.hotKeys.length === 0">未设置</span>
         </div>
         <el-button
           :disabled="recordKeyDowning"
@@ -104,6 +104,9 @@ const pull = () => {
         })
       }
     })
+    .catch(error => {
+      ElMessage.error(`拉取源失败：${getErrorMessage(error)}`)
+    })
     .finally(() => loadingMsg.close())
 }
 
@@ -121,31 +124,35 @@ const push = () => {
     message: '正在推送中',
     type: 'info',
   })
-  API.saveSources(sources, kind).then(({ data }) => {
-    if (data.isSuccess) {
-      const okData = data.data
-      if (Array.isArray(okData)) {
-        let failMsg = ``
-        if (sources.length > okData.length) {
-          failMsg = '\n推送失败的源将用红色字体标注!'
-          store.setPushReturnSources(okData)
+  API.saveSources(sources, kind)
+    .then(({ data }) => {
+      if (data.isSuccess) {
+        const okData = data.data
+        if (Array.isArray(okData)) {
+          let failMsg = ``
+          if (sources.length > okData.length) {
+            failMsg = '\n推送失败的源将用红色字体标注!'
+            store.setPushReturnSources(okData)
+          }
+          ElMessage({
+            message: `批量推送源到「${apiTargetName}」\n共计：${
+              sources.length
+            } 条\n成功：${okData.length} 条\n失败：${
+              sources.length - okData.length
+            } 条${failMsg}`,
+            type: 'success',
+          })
         }
+      } else {
         ElMessage({
-          message: `批量推送源到「${apiTargetName}」\n共计：${
-            sources.length
-          } 条\n成功：${okData.length} 条\n失败：${
-            sources.length - okData.length
-          } 条${failMsg}`,
-          type: 'success',
+          message: `批量推送源失败！\n错误信息：${data.errorMsg}`,
+          type: 'error',
         })
       }
-    } else {
-      ElMessage({
-        message: `批量推送源失败！\n错误信息：${data.errorMsg}`,
-        type: 'error',
-      })
-    }
-  })
+    })
+    .catch(error => {
+      ElMessage.error(`推送源失败：${getErrorMessage(error)}`)
+    })
 }
 
 const convertToTab = () => {
@@ -169,22 +176,26 @@ const saveSource = () => {
   const source = store.currentSource
   if (isValidSource(source)) {
     normalizeSource(source)
-    API.saveSource(source, kind).then(({ data }) => {
-      const sourceName = getSourceName(source)
-      if (data.isSuccess) {
-        ElMessage({
-          message: `源《${sourceName}》已成功保存到「${apiTargetName}」`,
-          type: 'success',
-        })
-        // 保存到 store
-        store.saveCurrentSource()
-      } else {
-        ElMessage({
-          message: `源《${sourceName}》保存失败！\n错误信息：${data.errorMsg}`,
-          type: 'error',
-        })
-      }
-    })
+    API.saveSource(source, kind)
+      .then(({ data }) => {
+        const sourceName = getSourceName(source)
+        if (data.isSuccess) {
+          ElMessage({
+            message: `源《${sourceName}》已成功保存到「${apiTargetName}」`,
+            type: 'success',
+          })
+          // 保存到 store
+          store.saveCurrentSource()
+        } else {
+          ElMessage({
+            message: `源《${sourceName}》保存失败！\n错误信息：${data.errorMsg}`,
+            type: 'error',
+          })
+        }
+      })
+      .catch(error => {
+        ElMessage.error(`保存源失败：${getErrorMessage(error)}`)
+      })
   } else {
     ElMessage({
       message: `请检查「必填」项是否全部填写`,
@@ -285,7 +296,7 @@ watch(
     hotkeys('*', event => {
       event.preventDefault()
       const pressedKeys = hotkeys.getPressedKeyString()
-      if (pressedKeys.length == 1 && pressedKeys[0] == 'esc') {
+      if (pressedKeys.length === 1 && pressedKeys[0] === 'esc') {
         // 单独按下 ESC 不录入
         return
       }
@@ -319,7 +330,7 @@ const bindHotKeys = () => {
   // hotkeys 默认过滤 INPUT、SELECT、TEXTAREA
   hotkeys.filter = () => true
   buttons.value.forEach(({ hotKeys, action }) => {
-    if (hotKeys.length == 0) return
+    if (hotKeys.length === 0) return
     hotkeys(hotKeys.join('+'), event => {
       event.preventDefault()
       action.call(null)
@@ -339,7 +350,7 @@ function readHotkeysConfig() {
     const localStorageConfig = localStorage.getItem('legado_web_hotkeys')
     if (localStorageConfig === null) return false
     const config = JSON.parse(localStorageConfig)
-    if (!Array.isArray(config) || config.length == 0) return false
+    if (!Array.isArray(config) || config.length === 0) return false
     buttons.value.forEach((button, index) => {
       const hotKeys = config[index]
       button.hotKeys = Array.isArray(hotKeys)

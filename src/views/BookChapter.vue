@@ -388,7 +388,7 @@ const saveReadingBookProgressToBrowser = (index: number, pos: number) => {
  **/
 const onVisibilityChange = () => {
   const _bookProgress = bookProgress.value
-  if (document.visibilityState == 'hidden' && _bookProgress) {
+  if (document.visibilityState === 'hidden' && _bookProgress) {
     store.saveBookProgress()
   }
 }
@@ -398,7 +398,7 @@ const onVisibilityChange = () => {
 const toNextChapter = () => {
   store.setContentLoading(true)
   const index = chapterIndex.value + 1
-  if (typeof catalog.value[index] !== 'undefined') {
+  if (catalog.value[index] !== undefined) {
     ElMessage({
       message: '下一章',
       type: 'info',
@@ -415,7 +415,7 @@ const toNextChapter = () => {
 const toPreChapter = () => {
   store.setContentLoading(true)
   const index = chapterIndex.value - 1
-  if (typeof catalog.value[index] !== 'undefined') {
+  if (catalog.value[index] !== undefined) {
     ElMessage({
       message: '上一章',
       type: 'info',

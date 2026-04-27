@@ -1,6 +1,7 @@
 import { formatDate } from '@vueuse/shared'
 export const isNullOrBlank = (string: string | null | undefined | number) =>
-  string == null ||
+  string === null ||
+  string === undefined ||
   (string as string).length === 0 ||
   /^\s+$/.test(string as string)
 

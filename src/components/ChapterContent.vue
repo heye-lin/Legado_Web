@@ -82,7 +82,7 @@ const proxyImage = (event: Event) => {
   */
   const target = event.target as HTMLImageElement
   const src = target.getAttribute('src')
-  if (src != null && src.length > 0) {
+  if (src !== null && src.length > 0) {
     target.src = API.getProxyImageUrl(bookUrl.value, src, readWidth.value)
   }
 }

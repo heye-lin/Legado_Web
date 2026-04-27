@@ -21,7 +21,7 @@
           <div class="reading-recent">
             <el-tag
               :type="
-                readingRecent.name == '尚无阅读记录' ? 'warning' : 'primary'
+                readingRecent.name === '尚无阅读记录' ? 'warning' : 'primary'
               "
               class="recent-book"
               size="large"
@@ -36,7 +36,7 @@
                   true,
                 )
               "
-              :class="{ 'no-point': readingRecent.bookUrl == '' }"
+              :class="{ 'no-point': readingRecent.bookUrl === '' }"
             >
               {{ readingRecent.name }}
             </el-tag>

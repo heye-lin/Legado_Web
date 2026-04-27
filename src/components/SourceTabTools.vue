@@ -6,10 +6,10 @@
       :name="tab[0]"
       :label="tab[1]"
     >
-      <source-json v-if="index == 0" />
-      <source-debug v-if="index == 1" />
-      <source-list v-if="index == 2" />
-      <source-help v-if="index == 3" />
+      <source-json v-if="index === 0" />
+      <source-debug v-if="index === 1" />
+      <source-list v-if="index === 2" />
+      <source-help v-if="index === 3" />
     </el-tab-pane>
   </el-tabs>
 </template>

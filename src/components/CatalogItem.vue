@@ -22,7 +22,7 @@ const props = defineProps<{
 }>()
 
 const isSelected = (idx: number) => {
-  return idx == props.currentChapterIndex
+  return idx === props.currentChapterIndex
 }
 
 // PC 端一个虚拟列表项中有两个章节

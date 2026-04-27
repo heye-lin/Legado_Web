@@ -16,7 +16,7 @@
             :style="themeColor"
             ref="themes"
             @click="setTheme(index)"
-            :class="{ selected: theme == index }"
+            :class="{ selected: theme === index }"
             ><em v-if="index < 6" class="iconfont">&#58980;</em
             ><em v-else class="moon-icon">{{ moonIcon }}</em></span
           >
@@ -27,7 +27,7 @@
             class="font-item"
             v-for="(font, index) in fonts"
             :key="index"
-            :class="{ selected: selectedFont == index }"
+            :class="{ selected: selectedFont === index }"
             @click="setFont(index)"
             >{{ font }}</span
           >
@@ -110,16 +110,13 @@
         <li class="paragraph-spacing">
           <i>段距</i>
           <div class="resize">
-            <div class="resize">
-              <span class="less" @click="lessParagraphSpacing"
-                ><em class="iconfont">&#58966;</em></span
-              ><b></b>
-              <span class="lang">{{ spacing.paragraph.toFixed(1) }}</span
-              ><b></b>
-              <span class="more" @click="moreParagraphSpacing"
-                ><em class="iconfont">&#58976;</em></span
-              >
-            </div>
+            <span class="less" @click="lessParagraphSpacing"
+              ><em class="iconfont">&#58966;</em></span
+            ><b></b> <span class="lang">{{ spacing.paragraph.toFixed(1) }}</span
+            ><b></b>
+            <span class="more" @click="moreParagraphSpacing"
+              ><em class="iconfont">&#58976;</em></span
+            >
           </div>
         </li>
         <li class="read-width" v-if="!store.miniInterface">
@@ -137,16 +134,14 @@
         <li class="paragraph-spacing">
           <i>翻页速度</i>
           <div class="resize">
-            <div class="resize">
-              <span class="less" @click="lessJumpDuration">
-                <em class="iconfont">&#xe625;</em>
-              </span>
-              <b></b> <span class="lang">{{ jumpDuration }}</span
-              ><b></b>
-              <span class="more" @click="moreJumpDuration"
-                ><em class="iconfont">&#xe626;</em></span
-              >
-            </div>
+            <span class="less" @click="lessJumpDuration">
+              <em class="iconfont">&#xe625;</em>
+            </span>
+            <b></b> <span class="lang">{{ jumpDuration }}</span
+            ><b></b>
+            <span class="more" @click="moreJumpDuration"
+              ><em class="iconfont">&#xe626;</em></span
+            >
           </div>
         </li>
         <li class="infinite-loading">
@@ -154,14 +149,14 @@
           <span
             class="infinite-loading-item"
             :key="0"
-            :class="{ selected: infiniteLoading == false }"
+            :class="{ selected: infiniteLoading === false }"
             @click="setInfiniteLoading(false)"
             >关闭</span
           >
           <span
             class="infinite-loading-item"
             :key="1"
-            :class="{ selected: infiniteLoading == true }"
+            :class="{ selected: infiniteLoading === true }"
             @click="setInfiniteLoading(true)"
             >开启</span
           >
@@ -197,7 +192,7 @@ watch(
 // 主题颜色
 const theme = computed(() => store.theme)
 const isNight = computed(() => store.isNight)
-const moonIcon = computed(() => (theme.value == 6 ? '' : ''))
+const moonIcon = computed(() => (theme.value === 6 ? '' : ''))
 const themeColors = [
   {
     background: 'rgba(250, 245, 235, 0.8)',
@@ -268,18 +263,16 @@ const loadFontFromURL = () => {
         document.fonts.add(fontface)
         fontface
           .load()
-          //API.getBookShelf()
           .then(function () {
             instance.confirmButtonLoading = false
             ElMessage.info('字体加载成功！')
             setCustomFont()
             done()
           })
-          .catch(function (error) {
+          .catch(function () {
             instance.confirmButtonLoading = false
             instance.confirmButtonText = '确定'
             ElMessage.error('下载失败，请检查您输入的 URL')
-            throw error
           })
       } else {
         done()

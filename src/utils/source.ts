@@ -81,7 +81,6 @@ export const isSourceMatches: (source: Source, searchKey: string) => boolean = (
   source,
   searchKey,
 ) => {
-  // TODO: 正则和普通字符串识别 识别 * . \ [ ] <= <! != = ?: () \d\w\s\...
   if (isBookSource(source)) {
     return (
       textMatches(source.bookSourceName, searchKey) ||
