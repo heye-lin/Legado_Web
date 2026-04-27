@@ -61,7 +61,6 @@ export const useBookStore = defineStore('book', {
     /** 从数据源强制刷新书架书籍 */
     async refreshBookShelf(): Promise<Book[]> {
       const resp = await API.getBookShelf()
-      console.log('API.getBookShelf数据返回')
       const { isSuccess, data, errorMsg } = resp.data
       if (isSuccess === true) {
         if (
@@ -84,17 +83,14 @@ export const useBookStore = defineStore('book', {
           ElMessage.error(errorMsg ?? '后端返回格式错误！')
         }
       }
-      console.log('书架数据已更新')
       return this.shelf
     },
     /** 从数据源加载书架书籍，默认优先返回内存缓存 */
     async loadBookShelf(force = false): Promise<Book[]> {
       if (this.shelf.length > 0 && !force) {
-        console.log('返回缓存书架数据')
         void this.refreshBookShelf()
         return this.shelf
       }
-      console.log('从数据源获取书架数据...')
       return await this.refreshBookShelf()
     },
     /** 从后端加载书籍目录，优先返回内存缓存 */
@@ -119,7 +115,6 @@ export const useBookStore = defineStore('book', {
           ElMessage.info(`书籍${name}: 章节目录已更新`)
         }
         this.catalog = data
-        console.log(`书籍${name}: 章节目录已更新`)
         return this.catalog
       })
       if (
@@ -127,10 +122,8 @@ export const useBookStore = defineStore('book', {
         this.catalog.length > 0 &&
         this.catalog.length - 1 >= chapterIndex
       ) {
-        console.log(`返回书籍《${name}》 缓存的章节目录`)
         return this.catalog
       } else {
-        console.log(`从阅读后端获取书籍《${name}》 章节目录数据...`)
         return await fetchChapterList_promise
       }
     },
@@ -148,14 +141,8 @@ export const useBookStore = defineStore('book', {
       if (webReadConfigLoadedDate === undefined) {
         const _config = await API.getReadConfig()
         webReadConfigLoadedDate = new Date()
-        console.log(
-          `${this.$id}.loadWebConfig: ${webReadConfigLoadedDate.toLocaleString()}成功加载阅读配置`,
-        )
         return this.setConfig(_config)
       }
-      console.log(
-        `${this.$id}.loadWebConfig: 已于${webReadConfigLoadedDate.toLocaleString()}成功加载`,
-      )
     },
     setConfig(config?: webReadConfig) {
       this.config = normalizeReadConfig(config)

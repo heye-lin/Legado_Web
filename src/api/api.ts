@@ -1,6 +1,7 @@
 /** https://github.com/gedoor/legado/tree/master/app/src/main/java/io/legado/app/api */
 /** https://github.com/gedoor/legado/tree/master/app/src/main/java/io/legado/app/web */
 
+import { normalizeReadConfig } from '@/config/readConfig'
 import type { webReadConfig } from '@/web'
 import ajax from './axios'
 import standaloneApi, { type StandaloneBackupData } from './standalone'
@@ -60,10 +61,12 @@ const appGetReadConfig = async (http_url = legado_http_entry_point) => {
     baseURL: http_url.toString(),
     timeout: 3000,
   })
-  if (data.isSuccess) {
-    try {
-      return JSON.parse(data.data) as webReadConfig
-    } catch {}
+  if (!data.isSuccess) return
+
+  try {
+    return normalizeReadConfig(JSON.parse(data.data))
+  } catch {
+    return undefined
   }
 }
 const getReadConfig = (http_url = legado_http_entry_point) =>

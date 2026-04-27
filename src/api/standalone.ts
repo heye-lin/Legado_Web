@@ -137,7 +137,9 @@ const waitForTransaction = (tx: IDBTransaction) =>
 const abortTransaction = (tx: IDBTransaction) => {
   try {
     tx.abort()
-  } catch {}
+  } catch (error) {
+    void error
+  }
 }
 
 const readwriteStore = async <T>(

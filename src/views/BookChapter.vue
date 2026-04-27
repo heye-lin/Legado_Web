@@ -489,9 +489,9 @@ const ignoreKeyPress = (event: KeyboardEvent) => {
 onMounted(async () => {
   await store.loadWebConfig()
   //获取书籍数据
-  const bookUrl = sessionStorage.getItem('bookUrl')
-  const name = sessionStorage.getItem('bookName')
-  const author = sessionStorage.getItem('bookAuthor')
+  const bookUrl = sessionStorage.getItem('bookUrl') ?? ''
+  const name = sessionStorage.getItem('bookName') ?? ''
+  const author = sessionStorage.getItem('bookAuthor') ?? ''
   const initialChapterIndex = normalizeReadingNumber(
     sessionStorage.getItem('chapterIndex'),
   )
@@ -501,14 +501,12 @@ onMounted(async () => {
   const isSearchBook =
     sessionStorage.getItem('isSearchBook') === 'true' ||
     sessionStorage.getItem('isSeachBook') === 'true'
-  if (isNullOrBlank(bookUrl) || isNullOrBlank(name) || author === null) {
+  if (isNullOrBlank(bookUrl) || isNullOrBlank(name)) {
     ElMessage.warning('书籍信息为空，即将自动返回书架页面...')
     return setTimeout(toShelf, 500)
   }
   const book: typeof store.readingBook = {
-    // @ts-expect-error: bookUrl name author is NON_Blank string here
     bookUrl,
-    // @ts-expect-error: bookUrl name author is NON_Blank string here
     name,
     author,
     chapterIndex: initialChapterIndex,
@@ -597,7 +595,6 @@ const addToBookShelfConfirm = async () => {
   }
 }
 onBeforeRouteLeave(async (to, from, next) => {
-  console.log('onBeforeRouteLeave')
   // 弹窗时停止响应按键翻页
   window.removeEventListener('keyup', handleKeyPress)
   await addToBookShelfConfirm()

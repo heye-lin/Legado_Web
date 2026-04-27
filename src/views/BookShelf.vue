@@ -475,7 +475,6 @@ const loadShelf = async () => {
 onMounted(() => {
   //获取最近阅读书籍
   restoreReadingRecent()
-  console.log('bookshelf mounted')
   void loadingWrapper(loadShelf()).catch(error => {
     ElMessage.error(`加载书架失败：${getErrorMessage(error)}`)
   })

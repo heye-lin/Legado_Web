@@ -92,13 +92,6 @@ const proxyImage = (event: Event) => {
  */
 const handleImgLoadError = (event: Event) => {
   if ((event.target as HTMLElement)?.tagName === 'IMG') {
-    const src = (event.target as HTMLImageElement).getAttribute('src') ?? ''
-    console.log(
-      '[ChapterContent]: IMG Load Error, replace src:',
-      src,
-      '=>',
-      API.getProxyImageUrl(bookUrl.value, src, readWidth.value),
-    )
     proxyImage(event)
   }
 }

@@ -21,34 +21,39 @@
           :required="required"
         >
           <el-input
-            v-if="type == 'String' && typeof namespace == 'undefined'"
+            v-if="type === 'String' && namespace === undefined"
             type="textarea"
-            v-model="currentSource[id]"
+            :model-value="getTextValue(id)"
             :placeholder="hint"
             autosize
+            @update:model-value="value => setFieldValue(id, value)"
           />
           <el-input
-            v-if="type == 'String' && typeof namespace != 'undefined'"
+            v-if="type === 'String' && namespace !== undefined"
             type="textarea"
-            v-model="currentSource[namespace][id]"
+            :model-value="getTextValue(id, namespace)"
             :placeholder="hint"
             autosize
+            @update:model-value="value => setFieldValue(id, value, namespace)"
           />
 
           <el-switch
-            v-if="(type as string) === 'Boolean'"
-            v-model="currentSource[id]"
+            v-if="type === 'Boolean'"
+            :model-value="getBooleanValue(id)"
+            @update:model-value="value => setFieldValue(id, value)"
           />
 
           <el-input-number
-            v-if="(type as string) === 'Number'"
-            v-model="currentSource[id]"
+            v-if="type === 'Number'"
+            :model-value="getNumberValue(id)"
             :min="0"
+            @update:model-value="value => setFieldValue(id, value)"
           />
 
           <el-select
-            v-if="(type as string) === 'Array'"
-            v-model="currentSource[id]"
+            v-if="type === 'Array'"
+            :model-value="getNumberValue(id)"
+            @update:model-value="value => setFieldValue(id, value)"
           >
             <el-option
               v-for="(optionName, index) in array"
@@ -69,8 +74,53 @@ import type { SourceConfig } from '@/config/sourceConfig'
 const store = useSourceStore()
 defineProps<{ config: SourceConfig }>()
 
-type SourceFormModel = Record<string, any> // eslint-disable-line @typescript-eslint/no-explicit-any
-const currentSource = computed(() => store.currentSource as SourceFormModel)
+type SourceFieldValue = string | number | boolean | undefined
+type SourceFormSection = Record<string, SourceFieldValue>
+type SourceFormModel = Record<string, SourceFieldValue | SourceFormSection>
+
+const currentSource = computed(
+  () => store.currentSource as unknown as SourceFormModel,
+)
+
+const isFormSection = (
+  value: SourceFormModel[string],
+): value is SourceFormSection => typeof value === 'object' && value !== null
+
+const ensureSection = (namespace: string) => {
+  const section = currentSource.value[namespace]
+  if (isFormSection(section)) return section
+
+  const newSection: SourceFormSection = {}
+  currentSource.value[namespace] = newSection
+  return newSection
+}
+
+const getFieldValue = (id: string, namespace?: string) =>
+  namespace === undefined
+    ? currentSource.value[id]
+    : ensureSection(namespace)[id]
+
+const setFieldValue = (
+  id: string,
+  value: SourceFieldValue,
+  namespace?: string,
+) => {
+  if (namespace === undefined) {
+    currentSource.value[id] = value
+    return
+  }
+  ensureSection(namespace)[id] = value
+}
+
+const getTextValue = (id: string, namespace?: string) => {
+  const value = getFieldValue(id, namespace)
+  return typeof value === 'string' || typeof value === 'number' ? value : ''
+}
+const getBooleanValue = (id: string) => getFieldValue(id) === true
+const getNumberValue = (id: string) => {
+  const value = getFieldValue(id)
+  return typeof value === 'number' ? value : undefined
+}
 </script>
 
 <style lang="scss" scoped>
