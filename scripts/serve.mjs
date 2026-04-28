@@ -2735,7 +2735,144 @@ const compareBookSources = (left, right) =>
   (right.weight ?? 0) - (left.weight ?? 0) ||
   String(left.bookSourceName).localeCompare(String(right.bookSourceName))
 
-const searchBookSources = async keyword => {
+const normalizeSearchText = value =>
+  String(value ?? '')
+    .trim()
+    .toLocaleLowerCase()
+
+const collectSourceRuleStrings = (value, output = []) => {
+  if (value === undefined || value === null) return output
+  if (typeof value === 'string' || typeof value === 'number') {
+    output.push(String(value))
+    return output
+  }
+  if (Array.isArray(value)) {
+    value.forEach(item => collectSourceRuleStrings(item, output))
+    return output
+  }
+  if (typeof value === 'object') {
+    Object.values(value).forEach(item => collectSourceRuleStrings(item, output))
+  }
+  return output
+}
+
+const sourceHasSearchRule = source =>
+  Boolean(
+    source.searchUrl?.trim() &&
+      source.ruleSearch?.bookList?.trim() &&
+      source.ruleSearch?.name?.trim() &&
+      source.ruleSearch?.bookUrl?.trim(),
+  )
+
+const sourceNeedsCookieJar = source => source.enabledCookieJar === true
+const sourceNeedsLogin = source =>
+  Boolean(source.loginUi?.trim() || source.loginCheckJs?.trim())
+const sourceUsesJsRule = source =>
+  Boolean(
+    source.jsLib?.trim() ||
+      source.loginUi?.trim() ||
+      source.loginCheckJs?.trim() ||
+      source.coverDecodeJs?.trim() ||
+      collectSourceRuleStrings([
+        source.searchUrl,
+        source.ruleSearch,
+        source.ruleBookInfo,
+        source.ruleToc,
+        source.ruleContent,
+        source.ruleExplore,
+      ]).some(rule =>
+        /(^\s*(?:@?js:|<js>)|<js>|java\.|source\.getVariable|source\.setVariable)/i.test(
+          rule,
+        ),
+      ),
+  )
+
+const sourceFeatureMatches = (source, feature) => {
+  if (feature === 'searchable') return sourceHasSearchRule(source)
+  if (feature === 'unsearchable') return !sourceHasSearchRule(source)
+  if (feature === 'cookie') return sourceNeedsCookieJar(source)
+  if (feature === 'js') return sourceUsesJsRule(source)
+  if (feature === 'login') return sourceNeedsLogin(source)
+  return true
+}
+
+const sourceEnabledMatches = (source, enabled) => {
+  if (enabled === 'enabled') return source.enabled === true
+  if (enabled === 'disabled') return source.enabled !== true
+  return true
+}
+
+const sourceFilterTexts = source => {
+  const rule = collectSourceRuleStrings([
+    source.searchUrl,
+    source.exploreUrl,
+    source.bookUrlPattern,
+    source.ruleSearch,
+    source.ruleBookInfo,
+    source.ruleToc,
+    source.ruleContent,
+    source.ruleExplore,
+  ])
+  const group = source.bookSourceGroup
+  const comment = source.bookSourceComment
+  return {
+    all: [
+      source.bookSourceName,
+      source.bookSourceUrl,
+      group,
+      comment,
+      source.variableComment,
+      ...rule,
+    ].filter(value => typeof value === 'string'),
+    name: [source.bookSourceName],
+    url: [source.bookSourceUrl],
+    group: group ? [group] : [],
+    comment: comment ? [comment] : [],
+    rule,
+  }
+}
+
+const sourceFilterFieldAlias = {
+  n: 'name',
+  name: 'name',
+  名称: 'name',
+  u: 'url',
+  url: 'url',
+  地址: 'url',
+  g: 'group',
+  group: 'group',
+  分组: 'group',
+  c: 'comment',
+  comment: 'comment',
+  备注: 'comment',
+  r: 'rule',
+  rule: 'rule',
+  规则: 'rule',
+}
+
+const sourceFilterTokenMatches = (source, token, defaultField) => {
+  const match = token.match(/^([^:：]+)[:：](.+)$/)
+  const field = match?.[1] ? sourceFilterFieldAlias[match[1]] : defaultField
+  const keyword = match?.[2] ?? token
+  if (!keyword) return true
+  return sourceFilterTexts(source)[field ?? defaultField].some(value =>
+    normalizeSearchText(value).includes(keyword),
+  )
+}
+
+const sourceMatchesSearchFilter = (source, filter) => {
+  const enabled = filter?.enabled ?? 'all'
+  const feature = filter?.feature ?? 'all'
+  const field = filter?.field ?? 'all'
+  if (!sourceEnabledMatches(source, enabled)) return false
+  if (!sourceFeatureMatches(source, feature)) return false
+  const tokens = normalizeSearchText(filter?.keyword)
+    .split(/\s+/)
+    .filter(Boolean)
+  return tokens.every(token => sourceFilterTokenMatches(source, token, field))
+}
+
+const searchBookSources = async (keyword, sourceFilter = {}) => {
   const searchKey = keyword.trim()
   if (!searchKey) return { books: [], reports: [] }
   if (searchKey.length > SEARCH_KEYWORD_MAX_LENGTH) {
@@ -2743,13 +2880,25 @@ const searchBookSources = async keyword => {
   }
 
   const sources = (await getSources('bookSource')).sort(compareBookSources)
+  const filteredSources = sources.filter(source =>
+    sourceMatchesSearchFilter(source, sourceFilter),
+  )
   const results = await mapWithConcurrency(
-    sources,
+    filteredSources,
     SOURCE_SEARCH_CONCURRENCY,
     source => searchSingleBookSource(source, searchKey),
   )
   const bookMap = new Map()
   const reports = []
+  if (filteredSources.length < sources.length) {
+    reports.push({
+      sourceName: '系统',
+      sourceUrl: '',
+      status: 'skipped',
+      count: sources.length - filteredSources.length,
+      message: `已按书源筛选条件搜索 ${filteredSources.length}/${sources.length} 个书源，跳过 ${sources.length - filteredSources.length} 个`,
+    })
+  }
   let truncatedCount = 0
   results.forEach(result => {
     reports.push(result.report)
@@ -4377,7 +4526,13 @@ const handleApi = async (req, res, url) => {
       if (!isRecord(body) || typeof body.keyword !== 'string') {
         throw badRequest('搜索请求缺少 keyword')
       }
-      sendApiOk(res, await searchBookSources(body.keyword))
+      sendApiOk(
+        res,
+        await searchBookSources(
+          body.keyword,
+          isRecord(body.sourceFilter) ? body.sourceFilter : {},
+        ),
+      )
       return true
     }
 

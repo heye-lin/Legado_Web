@@ -103,6 +103,19 @@ export type SourceSearchResult = {
   reports: SourceSearchReport[]
 }
 
+export type SourceSearchFilter = {
+  keyword?: string
+  enabled?: 'all' | 'enabled' | 'disabled'
+  feature?:
+    | 'all'
+    | 'searchable'
+    | 'unsearchable'
+    | 'cookie'
+    | 'js'
+    | 'login'
+  field?: 'all' | 'name' | 'url' | 'group' | 'comment' | 'rule'
+}
+
 export type SourceBookImportResult = {
   book: Book
   chapterCount: number

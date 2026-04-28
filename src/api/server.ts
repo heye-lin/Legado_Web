@@ -8,6 +8,7 @@ import type {
   SourceBookImportResult,
   SourceBookPreviewResult,
   SourceSearchBook,
+  SourceSearchFilter,
   SourceSearchResult,
 } from '@/book'
 import type { Source } from '@/source'
@@ -285,7 +286,7 @@ const getBookContent = async (
 
 const searchBookSources = async (
   searchKey: string,
-  options: { signal?: AbortSignal } = {},
+  options: { signal?: AbortSignal; sourceFilter?: SourceSearchFilter } = {},
 ): ApiResult<SourceSearchResult> => {
   const keyword = searchKey.trim()
   if (keyword === '') {
@@ -306,7 +307,10 @@ const searchBookSources = async (
         errorMsg: '',
         data: await request<SourceSearchResult>('/api/book-source-search', {
           method: 'POST',
-          body: JSON.stringify({ keyword }),
+          body: JSON.stringify({
+            keyword,
+            sourceFilter: options.sourceFilter,
+          }),
           signal: options.signal,
         }),
       },

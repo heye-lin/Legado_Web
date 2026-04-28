@@ -3,6 +3,7 @@ import type {
   Book,
   SourceBookImportResult,
   SourceBookPreviewResult,
+  SourceSearchFilter,
   SourceSearchBook,
   SourceSearchReport,
 } from '@/book'
@@ -72,6 +73,10 @@ export const useSourceSearch = ({
   const isSearchingSources = ref(false)
   const sourceSearchDialogVisible = ref(false)
   const sourceSearchInput = ref('')
+  const sourceSearchSourceKeyword = ref('')
+  const sourceSearchEnabledFilter = ref<NonNullable<SourceSearchFilter['enabled']>>('enabled')
+  const sourceSearchFeatureFilter = ref<NonNullable<SourceSearchFilter['feature']>>('searchable')
+  const sourceSearchFieldFilter = ref<NonNullable<SourceSearchFilter['field']>>('all')
   const sourceSearchReportsExpanded = ref(false)
   const importingSourceBookKeys = ref(new Set<string>())
   const previewDialogVisible = ref(false)
@@ -87,6 +92,13 @@ export const useSourceSearch = ({
       sourceSearchErrorMessage.value ||
       getSourceSearchEmptyMessage(sourceSearchReports.value),
   )
+
+  const sourceFilter = computed<SourceSearchFilter>(() => ({
+    keyword: sourceSearchSourceKeyword.value.trim(),
+    enabled: sourceSearchEnabledFilter.value,
+    feature: sourceSearchFeatureFilter.value,
+    field: sourceSearchFieldFilter.value,
+  }))
 
   const resetSourceSearchState = () => {
     sourceSearchActive.value = false
@@ -127,6 +139,7 @@ export const useSourceSearch = ({
     try {
       const result = await API.searchBookSources(keyword, {
         signal: controller.signal,
+        sourceFilter: sourceFilter.value,
       })
       if (currentRunId !== sourceSearchRunId || controller.signal.aborted) return
       if (!result.data.isSuccess) {
@@ -253,6 +266,10 @@ export const useSourceSearch = ({
     isSearchingSources,
     sourceSearchDialogVisible,
     sourceSearchInput,
+    sourceSearchSourceKeyword,
+    sourceSearchEnabledFilter,
+    sourceSearchFeatureFilter,
+    sourceSearchFieldFilter,
     sourceSearchReportsExpanded,
     sourceSearchEmptyMessage,
     importingSourceBookKeys,

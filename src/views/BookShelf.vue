@@ -244,6 +244,35 @@
           aria-label="输入书名、作者或关键词进行书源搜索"
           @keyup.enter="confirmSourceSearchDialog"
         />
+        <div class="source-search-filter-grid">
+          <el-input
+            v-model="sourceSearchSourceKeyword"
+            clearable
+            placeholder="筛选参与搜索的书源，例如 起点、group:小说、url:qidian"
+            aria-label="筛选参与搜索的书源"
+          />
+          <el-select v-model="sourceSearchEnabledFilter">
+            <el-option label="仅启用书源" value="enabled" />
+            <el-option label="全部状态" value="all" />
+            <el-option label="仅禁用" value="disabled" />
+          </el-select>
+          <el-select v-model="sourceSearchFeatureFilter">
+            <el-option label="仅可搜索" value="searchable" />
+            <el-option label="全部能力" value="all" />
+            <el-option label="不可搜索" value="unsearchable" />
+            <el-option label="CookieJar" value="cookie" />
+            <el-option label="JS/动态规则" value="js" />
+            <el-option label="登录相关" value="login" />
+          </el-select>
+          <el-select v-model="sourceSearchFieldFilter">
+            <el-option label="全字段匹配" value="all" />
+            <el-option label="只搜名称" value="name" />
+            <el-option label="只搜地址" value="url" />
+            <el-option label="只搜分组" value="group" />
+            <el-option label="只搜备注" value="comment" />
+            <el-option label="只搜规则" value="rule" />
+          </el-select>
+        </div>
       </div>
       <template #footer>
         <el-button @click="sourceSearchDialogVisible = false">取消</el-button>
@@ -336,6 +365,10 @@ const {
   isSearchingSources,
   sourceSearchDialogVisible,
   sourceSearchInput,
+  sourceSearchSourceKeyword,
+  sourceSearchEnabledFilter,
+  sourceSearchFeatureFilter,
+  sourceSearchFieldFilter,
   sourceSearchReportsExpanded,
   sourceSearchEmptyMessage,
   importingSourceBookKeys,
@@ -652,6 +685,17 @@ onUnmounted(
       color: var(--shelf-muted);
       line-height: 1.7;
     }
+
+    .source-search-filter-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 10px;
+      margin-top: 12px;
+
+      > :first-child {
+        grid-column: 1 / -1;
+      }
+    }
   }
 
   .shelf-wrapper {
@@ -801,6 +845,14 @@ onUnmounted(
 }
 
 @media screen and (max-width: 750px) {
+  .index-wrapper {
+    .source-search-dialog {
+      .source-search-filter-grid {
+        grid-template-columns: 1fr;
+      }
+    }
+  }
+
   .index-wrapper {
     overflow-x: hidden;
     flex-direction: column;

@@ -6,6 +6,7 @@ import type {
   SourceBookImportResult,
   SourceBookPreviewResult,
   SourceSearchBook,
+  SourceSearchFilter,
   SourceSearchReport,
   SourceSearchResult,
 } from '@/book'
@@ -13,6 +14,7 @@ import type { BookSource, RssSource, Source } from '@/source'
 import type { webReadConfig } from '@/web'
 import { DEFAULT_READ_CONFIG, normalizeReadConfig } from '@/config/readConfig'
 import { getSourceUniqueKey } from '@/utils/source'
+import { isSourceMatchesAdvanced } from '@/utils/source'
 import { parseSourcesForKind } from '@/utils/sourceImport'
 import {
   type SourceKind,
@@ -642,6 +644,7 @@ const getErrorMessage = (error: unknown) =>
 
 type SourceSearchOptions = {
   signal?: AbortSignal
+  sourceFilter?: SourceSearchFilter
 }
 
 type SourceSearchItemResult = {
@@ -1314,8 +1317,15 @@ const searchBookSources = async (
   const sources = (readSources('bookSource') as BookSource[]).sort(
     compareBookSources,
   )
+  const filteredSources = sources.filter(source =>
+    isSourceMatchesAdvanced(source, options.sourceFilter?.keyword ?? '', {
+      enabled: options.sourceFilter?.enabled ?? 'all',
+      feature: options.sourceFilter?.feature ?? 'all',
+      field: options.sourceFilter?.field ?? 'all',
+    }),
+  )
   const results = await mapWithConcurrency(
-    sources,
+    filteredSources,
     SOURCE_SEARCH_CONCURRENCY,
     source => searchSingleBookSource(source, key, options),
     () => options.signal?.aborted === true,
@@ -1327,6 +1337,15 @@ const searchBookSources = async (
     reports.push(result.report)
     result.books.forEach(book => bookMap.set(book.resultKey, book))
   })
+  if (filteredSources.length < sources.length) {
+    reports.unshift({
+      sourceName: '系统',
+      sourceUrl: '',
+      status: 'skipped',
+      count: sources.length - filteredSources.length,
+      message: `已按书源筛选条件搜索 ${filteredSources.length}/${sources.length} 个书源，跳过 ${sources.length - filteredSources.length} 个`,
+    })
+  }
 
   return ok({
     books: Array.from(bookMap.values()),
