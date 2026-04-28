@@ -4,7 +4,7 @@ import dns from 'node:dns/promises'
 import fs from 'node:fs/promises'
 import http from 'node:http'
 import https from 'node:https'
-import ipaddr from 'node:net'
+import net from 'node:net'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import zlib from 'node:zlib'
@@ -50,6 +50,7 @@ const COMPLEX_SEARCH_URL_PATTERN =
   /(^\s*(@?js:|<js>)|<js>|java\.ajax|java\.|source\.getVariable|source\.setVariable|buildRequest\()/i
 const SELECTOR_INDEX_PATTERN = /^(.*)\.(-?\d+)(?::(-?\d+))?$/
 const BRACKET_SELECTOR_INDEX_PATTERN = /^(.*)\[(-?\d+)\]$/
+const SELECTOR_EXCLUSION_PATTERN = /^(.*)!(-?\d+)(?::(-?\d+))?$/
 const JSON_ACCESSOR_PATTERN =
   /^[A-Za-z_$][\w$]*(?:\[(?:-?\d+|\*)\])?(?:\.[A-Za-z_$][\w$]*(?:\[(?:-?\d+|\*)\])?)*$/
 const GZIP_MAGIC_0 = 0x1f
@@ -627,24 +628,45 @@ const clearData = async () => {
   await query(`DELETE FROM ${SCHEMA}.app_state`)
 }
 
+const isIpv4InRange = (parts, start, end) => {
+  const value =
+    ((parts[0] << 24) | (parts[1] << 16) | (parts[2] << 8) | parts[3]) >>> 0
+  return value >= start && value <= end
+}
+
 const isPrivateIp = ip => {
-  if (ipaddr.isIPv4(ip)) {
+  if (net.isIPv4(ip)) {
     const parts = ip.split('.').map(Number)
     return (
+      parts[0] === 0 ||
       parts[0] === 10 ||
       parts[0] === 127 ||
       (parts[0] === 172 && parts[1] >= 16 && parts[1] <= 31) ||
       (parts[0] === 192 && parts[1] === 168) ||
       (parts[0] === 169 && parts[1] === 254) ||
-      parts[0] === 0
+      (parts[0] === 100 && parts[1] >= 64 && parts[1] <= 127) ||
+      (parts[0] === 198 && (parts[1] === 18 || parts[1] === 19)) ||
+      (parts[0] >= 224 && parts[0] <= 255) ||
+      isIpv4InRange(parts, 0xc0000000, 0xc00000ff) ||
+      isIpv4InRange(parts, 0xc0000200, 0xc00002ff) ||
+      isIpv4InRange(parts, 0xc6336400, 0xc63364ff) ||
+      isIpv4InRange(parts, 0xcb007100, 0xcb0071ff) ||
+      isIpv4InRange(parts, 0xe9fc0000, 0xe9fc00ff)
     )
   }
-  if (ipaddr.isIPv6(ip)) {
+  if (net.isIPv6(ip)) {
+    const lowerIp = ip.toLowerCase()
+    if (lowerIp.startsWith('::ffff:')) {
+      return isPrivateIp(lowerIp.slice(7))
+    }
     return (
-      ip === '::1' ||
-      ip.toLowerCase().startsWith('fc') ||
-      ip.toLowerCase().startsWith('fd') ||
-      ip.toLowerCase().startsWith('fe80:')
+      lowerIp === '::' ||
+      lowerIp === '::1' ||
+      lowerIp.startsWith('fc') ||
+      lowerIp.startsWith('fd') ||
+      lowerIp.startsWith('fe80:') ||
+      lowerIp.startsWith('ff') ||
+      lowerIp.startsWith('2001:db8:')
     )
   }
   return true
@@ -957,21 +979,24 @@ const parseSourceHeaders = (rawHeader, options) => {
   return { headers, warnings: unique(warnings) }
 }
 
-const fillSearchKey = (template, searchKey) => {
-  const encodedKey = encodeURIComponent(searchKey)
+const fillSearchKey = (template, searchKey, { encodeKey = true } = {}) => {
+  const renderedKey = encodeKey ? encodeURIComponent(searchKey) : searchKey
   return template
-    .replace(/\{\{\s*(?:key|keyword|searchKey)\s*\}\}/g, encodedKey)
-    .replace(/\{\{\s*\(?\s*page\s*-\s*1\s*\)?\s*\*\s*\d+\s*\}\}/g, '0')
-    .replace(/\{\{\s*(?:page|searchPage)\s*\}\}/g, '1')
+    .replace(/\{\{\s*(?:key|keyword|searchKey)\s*\}\}/gi, renderedKey)
+    .replace(/\{\{\s*\(?\s*(?:page|searchPage)\s*-\s*1\s*\)?\s*\}\}/gi, '0')
+    .replace(/\{\{\s*\(?\s*page\s*-\s*1\s*\)?\s*\*\s*\d+\s*\}\}/gi, '0')
+    .replace(/\{\{\s*(?:page|searchPage)\s*\}\}/gi, '1')
 }
 
 const fillSearchPage = template =>
   template
-    .replace(/\{\{\s*\(?\s*page\s*-\s*1\s*\)?\s*\*\s*\d+\s*\}\}/g, '0')
-    .replace(/\{\{\s*(?:page|searchPage)\s*\}\}/g, '1')
+    .replace(/\{\{\s*\(?\s*(?:page|searchPage)\s*-\s*1\s*\)?\s*\}\}/gi, '0')
+    .replace(/\{\{\s*\(?\s*page\s*-\s*1\s*\)?\s*\*\s*\d+\s*\}\}/gi, '0')
+    .replace(/\{\{\s*(?:page|searchPage)\s*\}\}/gi, '1')
 
 const isSupportedSearchTemplateExpression = expression =>
   /^(?:key|keyword|searchKey|page|searchPage)$/i.test(expression) ||
+  /^\(?\s*(?:page|searchPage)\s*-\s*1\s*\)?$/i.test(expression) ||
   /^\(?\s*page\s*-\s*1\s*\)?\s*\*\s*\d+$/i.test(expression)
 
 const findUnsupportedSearchUrlExpression = value => {
@@ -994,7 +1019,16 @@ const splitSearchUrl = searchUrl => {
   const urlAndBody =
     configMatch === null ? trimmed : trimmed.slice(0, configMatch.index).trim()
   const bodySeparatorIndex = urlAndBody.indexOf('@')
-  if (bodySeparatorIndex === -1) {
+  const queryIndex = urlAndBody.indexOf('?')
+  const shouldSplitBody =
+    bodySeparatorIndex > -1 &&
+    (queryIndex === -1 || bodySeparatorIndex < queryIndex) &&
+    (urlAndBody
+      .slice(bodySeparatorIndex + 1)
+      .trim()
+      .startsWith('{') ||
+      urlAndBody.slice(bodySeparatorIndex + 1).includes('='))
+  if (!shouldSplitBody) {
     return { url: urlAndBody, body: inlineConfig.body, config: inlineConfig }
   }
   return {
@@ -1004,16 +1038,18 @@ const splitSearchUrl = searchUrl => {
   }
 }
 
-const renderSearchTemplateValue = (value, searchKey) => {
-  if (typeof value === 'string') return fillSearchKey(value, searchKey)
+const renderSearchTemplateValue = (value, searchKey, options) => {
+  if (typeof value === 'string') return fillSearchKey(value, searchKey, options)
   if (Array.isArray(value)) {
-    return value.map(item => renderSearchTemplateValue(item, searchKey))
+    return value.map(item =>
+      renderSearchTemplateValue(item, searchKey, options),
+    )
   }
   if (isRecord(value)) {
     return Object.fromEntries(
       Object.entries(value).map(([key, child]) => [
         key,
-        renderSearchTemplateValue(child, searchKey),
+        renderSearchTemplateValue(child, searchKey, options),
       ]),
     )
   }
@@ -1030,7 +1066,9 @@ const serializeSearchBody = (body, searchKey) => {
   if (isRecord(body) || Array.isArray(body)) {
     return {
       contentType: 'application/json;charset=UTF-8',
-      body: JSON.stringify(renderSearchTemplateValue(body, searchKey)),
+      body: JSON.stringify(
+        renderSearchTemplateValue(body, searchKey, { encodeKey: false }),
+      ),
     }
   }
   return { contentType: 'application/x-www-form-urlencoded;charset=UTF-8' }
@@ -1062,7 +1100,9 @@ const buildSourceSearchRequest = (source, searchKey) => {
       if (isForbiddenProxyHeader(normalizedKey, { allowOriginReferer: true })) {
         warnings.push(`已忽略代理禁止转发的请求头 ${normalizedKey}`)
       } else {
-        headers[normalizedKey] = value
+        headers[normalizedKey] = fillSearchKey(value, searchKey, {
+          encodeKey: false,
+        })
       }
     })
   }
@@ -1190,6 +1230,17 @@ const selectorWithIndex = selector => {
   if (looksLikeCssClassOrIdEndingWithDigit(trimmed)) {
     return { selector: normalizeLegadoSelector(trimmed) }
   }
+  const exclusionMatch = trimmed.match(SELECTOR_EXCLUSION_PATTERN)
+  if (exclusionMatch !== null) {
+    const cssSelector = exclusionMatch[1].trim()
+    if (!cssSelector) return { selector: trimmed }
+    return {
+      selector: normalizeLegadoSelector(cssSelector),
+      excludeStartIndex: Number(exclusionMatch[2]),
+      excludeEndIndex:
+        exclusionMatch[3] === undefined ? undefined : Number(exclusionMatch[3]),
+    }
+  }
   const match =
     trimmed.match(BRACKET_SELECTOR_INDEX_PATTERN) ??
     trimmed.match(SELECTOR_INDEX_PATTERN)
@@ -1219,6 +1270,17 @@ const applySelectorIndex = (nodes, startIndex, endIndex) => {
   return nodes.slice(start, upperBound)
 }
 
+const applySelectorExclusion = (nodes, startIndex, endIndex) => {
+  if (startIndex === undefined) return nodes
+  const start = normalizeIndex(startIndex, nodes.length)
+  if (start < 0 || start >= nodes.length) return nodes
+  const end =
+    endIndex === undefined
+      ? start
+      : Math.max(start, normalizeIndex(endIndex, nodes.length))
+  return nodes.filter((_, index) => index < start || index > end)
+}
+
 const findSelectorNodes = ($, scope, selector) => {
   if (selector === '') return [scope]
   if (selector === 'children') return $(scope).children().toArray()
@@ -1239,11 +1301,21 @@ const selectRuleNodes = ($, scopes, rawSelector) => {
   let lastError
   for (const alternative of splitRuleAlternatives(rawSelector)) {
     try {
-      const { selector, startIndex, endIndex } = selectorWithIndex(alternative)
+      const {
+        selector,
+        startIndex,
+        endIndex,
+        excludeStartIndex,
+        excludeEndIndex,
+      } = selectorWithIndex(alternative)
       const nodes = scopes.flatMap(scope => {
         const normalizedSelector = normalizeLegadoSelector(selector)
         const selected = findSelectorNodes($, scope, normalizedSelector)
-        return applySelectorIndex(selected, startIndex, endIndex)
+        return applySelectorExclusion(
+          applySelectorIndex(selected, startIndex, endIndex),
+          excludeStartIndex,
+          excludeEndIndex,
+        )
       })
       if (nodes.length > 0) return nodes
     } catch (error) {
@@ -1365,7 +1437,9 @@ const selectBookListNodes = ($, listRule) => {
 const isJsonAccessorRule = rule => {
   const normalizedRule = normalizeJsonRule(rule)
   return (
-    isJsonPathRule(normalizedRule) || JSON_ACCESSOR_PATTERN.test(normalizedRule)
+    isJsonPathRule(normalizedRule) ||
+    /^\[[^\]]+\]$/.test(normalizedRule) ||
+    JSON_ACCESSOR_PATTERN.test(normalizedRule)
   )
 }
 
@@ -1486,6 +1560,10 @@ const readJsonPathValues = (value, path) => {
 const readJsonAccessorValues = (value, path) => {
   const trimmed = normalizeJsonRule(path)
   if (isJsonPathRule(trimmed)) return readJsonPathValues(value, trimmed)
+  const bracketOnlyMatch = trimmed.match(/^\[([^\]]+)\]$/)
+  if (bracketOnlyMatch !== null) {
+    return selectJsonBracketValues(value, bracketOnlyMatch[1])
+  }
   if (!JSON_ACCESSOR_PATTERN.test(trimmed)) return []
 
   return trimmed
@@ -1503,15 +1581,23 @@ const readJsonPathText = (value, path) =>
     .filter(Boolean)
     .join(',')
 
-const readJsonPathUnionValues = (value, rule) => {
+const readJsonPathUnionValues = (
+  value,
+  rule,
+  { flattenTerminalArrays = false } = {},
+) => {
   const results = []
   const seen = new Set()
   splitRuleAlternatives(rule).forEach(path => {
     readJsonAccessorValues(value, normalizeJsonRule(path)).forEach(item => {
-      const key = JSON.stringify(item)
-      if (seen.has(key)) return
-      seen.add(key)
-      results.push(item)
+      const values =
+        flattenTerminalArrays && Array.isArray(item) ? item : [item]
+      values.forEach(result => {
+        const key = JSON.stringify(result)
+        if (seen.has(key)) return
+        seen.add(key)
+        results.push(result)
+      })
     })
   })
   return results
@@ -1536,20 +1622,25 @@ const normalizeJsonRuleBody = (ruleBody, item) =>
     (_, expression) => readJsonPathText(item, expression.trim()),
   )
 
+const renderJsonRuleTemplate = (ruleBody, item) =>
+  ruleBody
+    .replace(/\{\{(.*?)\}\}/g, (_, expression) => {
+      const path = expression.trim()
+      return path === '' ? '' : readJsonPathText(item, path)
+    })
+    .replace(/\{(\$[\s\S]*?)\}/g, (_, expression) =>
+      readJsonPathText(item, expression.trim()),
+    )
+
 const readJsonRuleValue = (item, rule) => {
   const parsedRule = parseRule(rule)
   if (parsedRule === undefined) return ''
 
   const [ruleBody] = rule.trim().split('##')
   const normalizedRuleBody = normalizeJsonRuleBody(ruleBody, item)
-  const templateValue = normalizedRuleBody.replace(
-    /\{\{(.*?)\}\}/g,
-    (_, expression) => {
-      const path = expression.trim()
-      return path === '' ? '' : readJsonPathText(item, path)
-    },
-  )
-  const value = normalizedRuleBody.includes('{{')
+  const hasTemplate = /\{\{[\s\S]*?\}\}|\{\$[\s\S]*?\}/.test(normalizedRuleBody)
+  const templateValue = renderJsonRuleTemplate(normalizedRuleBody, item)
+  const value = hasTemplate
     ? templateValue
     : isJsonPathCompoundRule(normalizedRuleBody)
       ? readJsonCompoundText(item, normalizedRuleBody)
@@ -1566,8 +1657,32 @@ const isHttpUrl = value => {
   }
 }
 
-const resolveHttpUrl = (value, baseUrl) => {
+const normalizeBookSourceUrl = value => {
+  const trimmed = String(value ?? '').trim()
+  if (isHttpUrl(trimmed)) return trimmed
+  if (/^[A-Za-z0-9.-]+\.[A-Za-z]{2,}(?::\d+)?(?:\/.*)?$/.test(trimmed)) {
+    return `http://${trimmed}`
+  }
+  return ''
+}
+
+const stripLegadoUrlOptions = value => {
   const trimmed = value.trim()
+  if (!trimmed.endsWith('}')) return trimmed
+
+  const optionMatch = trimmed.match(/,\s*(\{[\s\S]*\})$/)
+  if (optionMatch === null || optionMatch.index === undefined) return trimmed
+
+  try {
+    const parsed = JSON.parse(optionMatch[1])
+    return isRecord(parsed) ? trimmed.slice(0, optionMatch.index) : trimmed
+  } catch {
+    return trimmed
+  }
+}
+
+const resolveHttpUrl = (value, baseUrl) => {
+  const trimmed = stripLegadoUrlOptions(value)
   if (!trimmed) return ''
   try {
     const url = new URL(trimmed, baseUrl)
@@ -1580,7 +1695,7 @@ const resolveHttpUrl = (value, baseUrl) => {
 }
 
 const resolveImageUrl = (value, baseUrl) => {
-  const trimmed = value.trim()
+  const trimmed = stripLegadoUrlOptions(value)
   if (!trimmed) return ''
   try {
     const url = new URL(trimmed, baseUrl)
@@ -1744,17 +1859,6 @@ const searchSingleBookSource = async (source, searchKey) => {
     }
   }
 
-  if (!isHttpUrl(source.bookSourceUrl)) {
-    return {
-      books: [],
-      report: sourceSearchReport(
-        source,
-        'unsupported',
-        '书源域名必须是 http/https URL',
-      ),
-    }
-  }
-
   if (!source.searchUrl?.trim()) {
     return {
       books: [],
@@ -1774,25 +1878,48 @@ const searchSingleBookSource = async (source, searchKey) => {
       ),
     }
   }
+  const normalizedBookSourceUrl = normalizeBookSourceUrl(source.bookSourceUrl)
+  if (!normalizedBookSourceUrl) {
+    return {
+      books: [],
+      report: sourceSearchReport(
+        source,
+        'unsupported',
+        '书源域名必须是 http/https URL',
+      ),
+    }
+  }
+  const searchableSource =
+    normalizedBookSourceUrl === source.bookSourceUrl
+      ? source
+      : { ...source, bookSourceUrl: normalizedBookSourceUrl }
 
   const ruleSearch = source.ruleSearch ?? {}
   const listRule = ruleSearch.bookList?.trim()
   if (!listRule) {
     return {
       books: [],
-      report: sourceSearchReport(source, 'skipped', '未配置搜索列表规则'),
+      report: sourceSearchReport(
+        searchableSource,
+        'skipped',
+        '未配置搜索列表规则',
+      ),
     }
   }
   if (!ruleSearch.name?.trim()) {
     return {
       books: [],
-      report: sourceSearchReport(source, 'skipped', '未配置书名规则'),
+      report: sourceSearchReport(searchableSource, 'skipped', '未配置书名规则'),
     }
   }
   if (!ruleSearch.bookUrl?.trim()) {
     return {
       books: [],
-      report: sourceSearchReport(source, 'skipped', '未配置详情地址规则'),
+      report: sourceSearchReport(
+        searchableSource,
+        'skipped',
+        '未配置详情地址规则',
+      ),
     }
   }
 
@@ -1811,7 +1938,7 @@ const searchSingleBookSource = async (source, searchKey) => {
     return {
       books: [],
       report: sourceSearchReport(
-        source,
+        searchableSource,
         'unsupported',
         `规则「${complexRule}」超出当前 Web 搜索支持范围`,
       ),
@@ -1827,7 +1954,7 @@ const searchSingleBookSource = async (source, searchKey) => {
   if (source.coverDecodeJs) warnings.push('封面解密 JS 暂不执行')
 
   try {
-    const request = buildSourceSearchRequest(source, searchKey)
+    const request = buildSourceSearchRequest(searchableSource, searchKey)
     warnings.push(...request.warnings)
     const { finalUrl, headers, content } = await requestBytes(request.url, {
       method: request.method,
@@ -1840,9 +1967,11 @@ const searchSingleBookSource = async (source, searchKey) => {
     })
     const text = decodeSourceText(content, headers, request.charset)
     const books = shouldParseSearchResponseAsJson(listRule, text)
-      ? readJsonPathUnionValues(parseJsonSearchResponse(text), listRule)
+      ? readJsonPathUnionValues(parseJsonSearchResponse(text), listRule, {
+          flattenTerminalArrays: true,
+        })
           .map((item, index) =>
-            buildJsonSourceSearchBook(source, item, finalUrl, index),
+            buildJsonSourceSearchBook(searchableSource, item, finalUrl, index),
           )
           .filter(Boolean)
           .slice(0, SOURCE_SEARCH_RESULT_LIMIT)
@@ -1850,7 +1979,7 @@ const searchSingleBookSource = async (source, searchKey) => {
           const $ = cheerio.load(text)
           return selectBookListNodes($, listRule)
             .map((node, index) =>
-              buildSourceSearchBook($, source, node, finalUrl, index),
+              buildSourceSearchBook($, searchableSource, node, finalUrl, index),
             )
             .filter(Boolean)
             .slice(0, SOURCE_SEARCH_RESULT_LIMIT)
@@ -1859,7 +1988,7 @@ const searchSingleBookSource = async (source, searchKey) => {
     return {
       books,
       report: sourceSearchReport(
-        source,
+        searchableSource,
         books.length > 0 ? 'success' : 'empty',
         appendWarnings(
           books.length > 0
@@ -1874,16 +2003,17 @@ const searchSingleBookSource = async (source, searchKey) => {
     const message = error instanceof Error ? error.message : String(error)
     const status =
       !isJsonResponseParseError(error) &&
-      (isSelectorSyntaxError(error) || isAnonymousAccessRejected(error, source))
+      (isSelectorSyntaxError(error) ||
+        isAnonymousAccessRejected(error, searchableSource))
         ? 'unsupported'
         : 'failed'
     return {
       books: [],
       report: sourceSearchReport(
-        source,
+        searchableSource,
         status,
         appendWarnings(
-          isAnonymousAccessRejected(error, source)
+          isAnonymousAccessRejected(error, searchableSource)
             ? `目标站拒绝匿名搜索请求：${message}`
             : status === 'unsupported'
               ? `规则语法不支持：${message}`
@@ -2161,7 +2291,11 @@ const serveStatic = async (req, res, url) => {
   const decodedPath = decodeURIComponent(url.pathname)
   const relativePath = decodedPath === '/' ? 'index.html' : decodedPath.slice(1)
   let filePath = path.resolve(staticDir, relativePath)
-  if (!filePath.startsWith(staticDir)) {
+  const relativeToStaticDir = path.relative(staticDir, filePath)
+  if (
+    relativeToStaticDir.startsWith('..') ||
+    path.isAbsolute(relativeToStaticDir)
+  ) {
     send(res, 403, 'Forbidden', { 'Content-Type': 'text/plain; charset=utf-8' })
     return
   }

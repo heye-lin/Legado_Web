@@ -56,7 +56,7 @@ watch(
 <style lang="scss" scoped>
 .editor {
   display: flex;
-  height: 100vh;
+  height: 100dvh;
   overflow: hidden;
   .left {
     flex: 1;
@@ -74,11 +74,20 @@ watch(
     flex-direction: column;
     overflow: auto;
 
+    :deep(.menu) {
+      order: -1;
+      position: sticky;
+      top: 0;
+      z-index: 10;
+      background: var(--el-bg-color);
+      border-bottom: 1px solid var(--el-border-color-light);
+    }
+
     .left,
     .right {
       flex: none;
       width: auto;
-      min-height: 70vh;
+      min-height: auto;
       margin: 0 12px;
     }
   }

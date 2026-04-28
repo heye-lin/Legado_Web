@@ -1,5 +1,6 @@
 <template>
   <div class="menu flex-column-center">
+    <el-button size="large" @click="openShelf">返回书架</el-button>
     <el-button
       v-for="button in buttons"
       size="large"
@@ -22,6 +23,7 @@
       <el-input
         v-model="subscriptionUrl"
         placeholder="https://shuyuan.yiove.com/sub.json"
+        aria-label="URL 订阅地址"
         @keyup.enter="importSubscription"
       />
     </div>
@@ -110,6 +112,9 @@ type ToolButton = { name: string; hotKeys: string[]; action: () => void }
 const subscriptionDialogVisible = ref(false)
 const subscriptionUrl = ref('')
 const isImportingSubscription = ref(false)
+const openShelf = () => {
+  router.push({ path: '/' })
+}
 
 const pull = () => {
   const kind = getCurrentSourceKind()

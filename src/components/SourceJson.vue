@@ -4,6 +4,7 @@
     v-model="sourceString"
     type="textarea"
     placeholder="这里输出序列化的 JSON 数据，可作为 Legado 兼容源配置保存或导入"
+    aria-label="源配置 JSON 编辑器"
     :rows="30"
     @change="update"
     style="margin-bottom: 4px"
@@ -39,6 +40,12 @@ watchEffect(() => {
   width: 100%;
 }
 :deep(#source-json) {
-  height: calc(100vh - 50px);
+  height: calc(100dvh - 50px);
+}
+
+@media screen and (max-width: 750px) {
+  :deep(#source-json) {
+    height: 50dvh;
+  }
 }
 </style>

@@ -3,17 +3,30 @@
   <head>
     <meta charset="UTF-8" />
     <link rel="icon" href="/favicon.ico" />
-    <meta name="viewport" content="width=device-width,initial-scale=1.0" />
+    <meta
+      name="viewport"
+      content="width=device-width,initial-scale=1.0,viewport-fit=cover"
+    />
     <meta
       name="description"
       content="纯 Web 阅读书架，支持 TXT 导入、书源管理、书源搜索和本地/服务端数据持久化。"
     />
-    <meta name="theme-color" content="#f7f7f7" />
-    <title>阅读 Web 端</title>
+    <meta
+      name="theme-color"
+      media="(prefers-color-scheme: light)"
+      content="#f7f7f7"
+    />
+    <meta
+      name="theme-color"
+      media="(prefers-color-scheme: dark)"
+      content="#161819"
+    />
+    <title>阅读 Web 端 - TXT 书架与书源搜索</title>
   </head>
 
   <body>
     <div id="app"></div>
+    <noscript>阅读 Web 端需要启用 JavaScript 才能使用。</noscript>
     <script type="module" src="./src/main.ts"></script>
   </body>
 </html>

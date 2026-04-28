@@ -7,6 +7,7 @@
         :key="getBookKey(book)"
         role="button"
         tabindex="0"
+        :aria-label="getBookActionLabel(book)"
         @click="handleClick(book)"
         @keydown.enter.prevent="handleClick(book)"
         @keydown.space.prevent="handleClick(book)"
@@ -46,6 +47,9 @@
           <div v-if="book.latestChapterTitle" class="last-chapter">
             最新：{{ book.latestChapterTitle }}
           </div>
+          <el-tag v-if="isSourceSearchBook(book)" size="small" effect="plain">
+            打开来源站
+          </el-tag>
           <el-button
             v-if="!isSourceSearchBook(book)"
             class="delete-book"
@@ -82,6 +86,10 @@ const handleClick = (book: BookItem) => emit('bookClick', book)
 const handleDelete = (book: Book) => emit('bookDelete', book)
 const getBookKey = (book: BookItem) =>
   isSourceSearchBook(book) ? book.resultKey : book.bookUrl
+const getBookActionLabel = (book: BookItem) =>
+  isSourceSearchBook(book)
+    ? `在新标签页打开《${book.name}》的来源站详情`
+    : `打开《${book.name}》`
 
 const escapeSvgText = (text: string) =>
   text.replace(/[&<>"']/g, char => {
@@ -223,7 +231,7 @@ const proxyImage = (evt: Event, book: BookItem) => {
         .intro,
         .dur-chapter,
         .last-chapter {
-          color: #969ba3;
+          color: #606975;
           font-size: 13px;
           margin-top: 3px;
           font-weight: 500;
@@ -239,9 +247,15 @@ const proxyImage = (evt: Event, book: BookItem) => {
       }
     }
 
-    .book:hover {
+    .book:hover,
+    .book:focus-visible {
       background: rgba(0, 0, 0, 0.1);
       transition-duration: 0.5s;
+    }
+
+    .book:focus-visible {
+      outline: 2px solid var(--el-color-primary);
+      outline-offset: 2px;
     }
   }
 

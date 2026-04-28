@@ -11,7 +11,7 @@
           v-model="searchWord"
           class="search-input"
           :prefix-icon="SearchIcon"
-          @keyup.enter="searchBook"
+          aria-label="筛选本地书架"
         >
           <template #append>
             <el-button
@@ -74,7 +74,7 @@
               size="small"
               @click="openSourceSearchDialog"
             >
-              书籍搜索
+              书源搜索
             </el-button>
             <el-button
               class="standalone-action-button"
@@ -110,7 +110,12 @@
         </div>
       </div>
       <div class="bottom-icons">
-        <a href="https://github.com/heye-lin/Legado_Web" target="_blank">
+        <a
+          href="https://github.com/heye-lin/Legado_Web"
+          target="_blank"
+          rel="noopener noreferrer"
+          aria-label="打开 Legado Web GitHub 仓库"
+        >
           <div class="bottom-icon">
             <img :src="githubUrl" alt="" />
           </div>
@@ -150,15 +155,15 @@
         class="shelf-feature-bar"
       >
         <div class="shelf-feature-text">
-          <strong>书源与书籍搜索</strong>
-          <span>先导入/保存书源，再用书源搜索书籍。</span>
+          <strong>书源搜索</strong>
+          <span>先导入或保存书源，再搜索在线书籍。</span>
         </div>
         <div class="shelf-feature-actions">
           <el-button type="warning" @click="openBookSourceManager">
             书源管理
           </el-button>
           <el-button type="success" @click="openSourceSearchDialog">
-            书籍搜索
+            书源搜索
           </el-button>
         </div>
       </div>
@@ -231,11 +236,7 @@
             size="small"
             @click="sourceSearchReportsExpanded = !sourceSearchReportsExpanded"
           >
-            {{
-              sourceSearchReportsExpanded
-                ? '收起报告'
-                : `查看全部 ${sourceSearchReportIssueCount} 条异常报告`
-            }}
+            {{ sourceSearchReportToggleText }}
           </el-button>
         </div>
         <div class="source-search-tip">
@@ -247,7 +248,7 @@
         <div class="empty-shelf-title">导入 TXT 开始阅读</div>
         <div class="empty-shelf-description">
           <p>选择本地 TXT 文件，或直接拖拽到书架区域导入。</p>
-          <p>也可以先进入书源管理导入书源，再用书源进行书籍搜索。</p>
+          <p>也可以先进入书源管理导入书源，再进行书源搜索。</p>
         </div>
         <div class="empty-shelf-actions">
           <el-button type="primary" size="large" @click="fileInput?.click()">
@@ -261,7 +262,7 @@
             size="large"
             @click="openSourceSearchDialog"
           >
-            书籍搜索
+            书源搜索
           </el-button>
         </div>
       </div>
@@ -279,7 +280,7 @@
         v-else-if="sourceSearchActive && books.length === 0"
         class="source-search-empty"
       >
-        没有可显示的书源搜索结果。请查看上方报告，或到书源管理导入目标站可访问且规则较简单的书源。
+        {{ sourceSearchEmptyMessage }}
       </div>
       <book-items
         v-else
@@ -303,6 +304,7 @@
           v-model="sourceSearchInput"
           placeholder="输入书名、作者或关键词"
           :prefix-icon="SearchIcon"
+          aria-label="输入书名、作者或关键词进行书源搜索"
           @keyup.enter="confirmSourceSearchDialog"
         />
       </div>
@@ -316,7 +318,7 @@
           :loading="isSearchingSources"
           @click="confirmSourceSearchDialog"
         >
-          搜索书籍
+          开始搜索
         </el-button>
       </template>
     </el-dialog>
@@ -371,7 +373,7 @@ const { loadingWrapper, isLoading } = useLoading(
 
 // 书架书籍和本地搜索
 const searchWord = ref('')
-const searchPlaceholder = '筛选本地书籍；右侧可书源搜索'
+const searchPlaceholder = '筛选本地书架'
 const sourceSearchBooks = shallowRef<SourceSearchBook[]>([])
 const sourceSearchReports = ref<SourceSearchReport[]>([])
 const sourceSearchActive = ref(false)
@@ -451,16 +453,27 @@ const sourceSearchIssueReports = computed(() =>
     report => report.status !== 'success' || report.count === 0,
   ),
 )
-const sourceSearchReportIssueCount = computed(
-  () => sourceSearchIssueReports.value.length,
-)
+const sourceSearchReportPreviewLimit = 8
 const sourceSearchReportDetails = computed(() =>
   sourceSearchReportsExpanded.value
-    ? sourceSearchIssueReports.value
-    : sourceSearchIssueReports.value.slice(0, 8),
+    ? sourceSearchReports.value
+    : sourceSearchIssueReports.value.slice(0, sourceSearchReportPreviewLimit),
 )
 const sourceSearchReportHiddenCount = computed(() =>
-  Math.max(0, sourceSearchIssueReports.value.length - 8),
+  Math.max(
+    0,
+    sourceSearchReportsExpanded.value
+      ? 0
+      : sourceSearchReports.value.length - sourceSearchReportPreviewLimit,
+  ),
+)
+const sourceSearchReportToggleText = computed(() =>
+  sourceSearchReportsExpanded.value
+    ? '收起搜索明细'
+    : `查看全部 ${sourceSearchReports.value.length} 条搜索明细`,
+)
+const sourceSearchEmptyMessage = computed(() =>
+  getSourceSearchEmptyMessage(sourceSearchReports.value),
 )
 
 const sourceSearchReportStatusText = (status: SourceSearchReport['status']) =>
@@ -471,8 +484,9 @@ const sourceSearchReportTagType = (status: SourceSearchReport['status']) =>
 
 const formatSourceSearchReportMessage = (message: string) => {
   const normalized = message.replace(/\s+/g, ' ').trim()
-  return normalized.length > 180
-    ? `${normalized.slice(0, 180).trimEnd()}…`
+  if (sourceSearchReportsExpanded.value) return normalized
+  return normalized.length > 220
+    ? `${normalized.slice(0, 220).trimEnd()}…`
     : normalized
 }
 
@@ -743,7 +757,7 @@ onUnmounted(
       font-weight: 300;
       font-family: FZZCYSK;
       margin-top: 16px;
-      color: #b1b1b1;
+      color: #6b7280;
     }
 
     .search-wrapper {
@@ -768,7 +782,7 @@ onUnmounted(
 
       .recent-title {
         font-size: 14px;
-        color: #b1b1b1;
+        color: #6b7280;
         font-family: FZZCYSK;
       }
 
@@ -776,7 +790,7 @@ onUnmounted(
         margin: 18px 0;
 
         .recent-book {
-          font-size: 10px;
+          font-size: 12px;
           cursor: pointer;
         }
       }
@@ -787,7 +801,7 @@ onUnmounted(
 
       .setting-title {
         font-size: 14px;
-        color: #b1b1b1;
+        color: #6b7280;
         font-family: FZZCYSK;
       }
 
@@ -796,9 +810,9 @@ onUnmounted(
       }
 
       .setting-connect {
-        font-size: 8px;
+        font-size: 12px;
         margin-top: 16px;
-        cursor: pointer;
+        cursor: default;
       }
 
       .standalone-action-button {
@@ -863,8 +877,8 @@ onUnmounted(
       gap: 6px;
 
       span {
-        color: #8a8f99;
-        font-size: 13px;
+        color: #606975;
+        font-size: 14px;
       }
     }
 
@@ -894,7 +908,7 @@ onUnmounted(
 
     .source-search-keyword {
       margin-left: 6px;
-      color: #909399;
+      color: #606975;
     }
 
     .source-search-actions {
@@ -905,8 +919,8 @@ onUnmounted(
     .source-search-report-details,
     .source-search-tip {
       margin-top: 8px;
-      color: #8a8f99;
-      font-size: 13px;
+      color: #606975;
+      font-size: 14px;
       line-height: 1.6;
     }
 
@@ -923,10 +937,10 @@ onUnmounted(
 
     .source-search-report-detail {
       display: flex;
-      align-items: center;
+      align-items: flex-start;
       gap: 8px;
       padding: 4px 0;
-      overflow: hidden;
+      overflow-wrap: anywhere;
     }
 
     .source-search-report-source {
@@ -941,9 +955,7 @@ onUnmounted(
 
     .source-search-report-message {
       min-width: 0;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
+      white-space: normal;
     }
 
     .source-search-report-toggle {
@@ -961,7 +973,7 @@ onUnmounted(
       box-sizing: border-box;
       border: 1px dashed #dcdfe6;
       border-radius: 18px;
-      color: #8a8f99;
+      color: #606975;
       text-align: center;
       line-height: 1.8;
       background: rgba(255, 255, 255, 0.42);
@@ -996,7 +1008,7 @@ onUnmounted(
     }
 
     .empty-shelf-description {
-      color: #8a8f99;
+      color: #606975;
       font-size: 14px;
       line-height: 1.7;
       margin-bottom: 24px;
@@ -1057,16 +1069,35 @@ onUnmounted(
       }
 
       .bottom-wrapper {
-        flex-direction: row;
+        flex-direction: column;
 
         > * {
-          flex-grow: 1;
           margin-top: 18px;
 
           .reading-recent,
           .setting-item {
-            margin-bottom: 0px;
+            margin-bottom: 0;
           }
+        }
+      }
+
+      .setting-wrapper {
+        margin-top: 18px;
+
+        .setting-item {
+          display: flex;
+          flex-wrap: wrap;
+          gap: 8px;
+          align-items: center;
+        }
+
+        .setting-connect,
+        .standalone-action-button {
+          margin: 0;
+        }
+
+        .standalone-action-button {
+          display: inline-flex;
         }
       }
 
@@ -1090,9 +1121,7 @@ onUnmounted(
       }
 
       .shelf-feature-bar {
-        flex-direction: column;
-        align-items: stretch;
-        margin: 16px;
+        display: none;
       }
 
       .shelf-feature-actions {

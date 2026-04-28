@@ -666,7 +666,6 @@ type SourceFetchProxyResult = {
 const SOURCE_SEARCH_CONCURRENCY = 4
 const SOURCE_SEARCH_TIMEOUT_MS = 12000
 const SOURCE_SEARCH_RESULT_LIMIT = 50
-const SEARCH_KEY_TOKENS = ['{{key}}', '{{keyword}}', '{{searchKey}}']
 const FORBIDDEN_SOURCE_HEADER_NAMES = new Set([
   'accept-encoding',
   'connection',
@@ -749,17 +748,28 @@ const parseSourceHeaders = (
   return { headers, warnings: unique(warnings) }
 }
 
-const fillSearchKey = (template: string, searchKey: string) => {
-  const encodedKey = encodeURIComponent(searchKey)
-  return SEARCH_KEY_TOKENS.reduce(
-    (text, token) => text.split(token).join(encodedKey),
-    template,
-  )
-}
+const fillSearchKey = (template: string, searchKey: string) =>
+  template
+    .replace(
+      /\{\{\s*(?:key|keyword|searchKey)\s*\}\}/gi,
+      encodeURIComponent(searchKey),
+    )
+    .replace(/\{\{\s*\(?\s*(?:page|searchPage)\s*-\s*1\s*\)?\s*\}\}/gi, '0')
+    .replace(/\{\{\s*\(?\s*page\s*-\s*1\s*\)?\s*\*\s*\d+\s*\}\}/gi, '0')
+    .replace(/\{\{\s*(?:page|searchPage)\s*\}\}/gi, '1')
 
 const splitSearchUrl = (searchUrl: string) => {
   const bodySeparatorIndex = searchUrl.indexOf('@')
-  if (bodySeparatorIndex === -1) {
+  const queryIndex = searchUrl.indexOf('?')
+  const shouldSplitBody =
+    bodySeparatorIndex > -1 &&
+    (queryIndex === -1 || bodySeparatorIndex < queryIndex) &&
+    (searchUrl
+      .slice(bodySeparatorIndex + 1)
+      .trim()
+      .startsWith('{') ||
+      searchUrl.slice(bodySeparatorIndex + 1).includes('='))
+  if (!shouldSplitBody) {
     return { url: searchUrl, body: undefined }
   }
   return {
@@ -951,8 +961,27 @@ const isHttpUrl = (url: string) => {
   }
 }
 
-const resolveHttpUrl = (value: string, baseUrl: string) => {
+const stripLegadoUrlOptions = (value: string) => {
   const trimmed = value.trim()
+  if (!trimmed.endsWith('}')) return trimmed
+
+  const optionMatch = trimmed.match(/,\s*(\{[\s\S]*\})$/)
+  if (optionMatch === null || optionMatch.index === undefined) return trimmed
+
+  try {
+    const parsed = JSON.parse(optionMatch[1]) as unknown
+    return typeof parsed === 'object' &&
+      parsed !== null &&
+      !Array.isArray(parsed)
+      ? trimmed.slice(0, optionMatch.index)
+      : trimmed
+  } catch {
+    return trimmed
+  }
+}
+
+const resolveHttpUrl = (value: string, baseUrl: string) => {
+  const trimmed = stripLegadoUrlOptions(value)
   if (!trimmed) return ''
   try {
     const url = new URL(trimmed, baseUrl)
@@ -965,7 +994,7 @@ const resolveHttpUrl = (value: string, baseUrl: string) => {
 }
 
 const resolveImageUrl = (value: string, baseUrl: string) => {
-  const trimmed = value.trim()
+  const trimmed = stripLegadoUrlOptions(value)
   if (!trimmed) return ''
   try {
     const url = new URL(trimmed, baseUrl)
@@ -1593,10 +1622,10 @@ const debug = (
 ) => {
   void kind
   const messages = [
-    '纯 Web 模式已接管源编辑器，不再依赖外部服务。',
+    '当前为纯 Web 源编辑器：源配置会保存到 PostgreSQL 生产服务或浏览器本地。',
     `当前源：${sourceUrl || '未填写'}`,
     searchKey ? `搜索关键字：${searchKey}` : '当前订阅源调试没有搜索关键字。',
-    '说明：完整 Legado 规则调试依赖原生规则引擎；当前生产服务会使用同源服务端接口抓取并解析搜索结果。',
+    '说明：完整 Legado 规则调试暂未内置；书源搜索会尽量通过同源服务端接口抓取并解析结果。',
   ]
   const timeoutIds: number[] = []
   const schedule = (callback: () => void, delay: number) => {

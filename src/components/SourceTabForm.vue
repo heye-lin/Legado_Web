@@ -127,12 +127,20 @@ const getNumberValue = (id: string) => {
 
 <style lang="scss" scoped>
 :deep(.el-tab-pane) {
-  height: calc(100vh - 55px);
+  height: calc(100dvh - 55px);
   padding-top: 15px;
   padding-right: 5px;
   overflow-y: auto;
 }
 :deep(.el-tabs__header) {
   margin: 0;
+}
+
+@media screen and (max-width: 750px) {
+  :deep(.el-tab-pane) {
+    height: auto;
+    max-height: none;
+    overflow-y: visible;
+  }
 }
 </style>

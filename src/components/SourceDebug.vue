@@ -5,6 +5,7 @@
     v-model="searchKey"
     placeholder="搜索书名、作者"
     :prefix-icon="Search"
+    aria-label="调试搜索关键词"
     style="padding-bottom: 4px"
     @keydown.enter="startDebug"
   />
@@ -16,6 +17,7 @@
     readonly
     :rows="29"
     placeholder="这里用于输出调试信息"
+    aria-label="源调试输出"
   />
 </template>
 
@@ -101,6 +103,12 @@ onUnmounted(() => {
 
 <style lang="scss" scoped>
 :deep(#debug-text) {
-  height: calc(100vh - 45px - 36px - 5px);
+  height: calc(100dvh - 45px - 36px - 5px);
+}
+
+@media screen and (max-width: 750px) {
+  :deep(#debug-text) {
+    height: 50dvh;
+  }
 }
 </style>

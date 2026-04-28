@@ -4,6 +4,7 @@
     class="search"
     :prefix-icon="Search"
     placeholder="筛选源"
+    aria-label="筛选源"
   />
   <div class="tool">
     <el-button @click="importSourceFile" :icon="Folder">导入 JSON</el-button>
@@ -12,21 +13,21 @@
       @click="outExport"
       :icon="Download"
     >
-      导出</el-button
+      {{ exportButtonText }}</el-button
     >
     <el-button
       type="danger"
       :icon="Delete"
       @click="deleteSelectSources"
       :disabled="sourceSelect.length === 0"
-      >删除</el-button
+      >{{ deleteButtonText }}</el-button
     >
     <el-button
       type="danger"
       :icon="Delete"
       @click="clearAllSources"
       :disabled="sources.length === 0"
-      >清空全部</el-button
+      >清空全部 {{ sources.length }}</el-button
     >
   </div>
   <div v-if="sources.length === 0" class="empty-source-list">
@@ -93,6 +94,16 @@ const sourceSelect = computed<Source[]>(() => {
     return sources
   }, [] as Source[])
 })
+const exportButtonText = computed(() =>
+  sourceSelect.value.length > 0
+    ? `导出选中 ${sourceSelect.value.length}`
+    : searchKey.value.trim() === ''
+      ? `导出全部 ${sources.value.length}`
+      : `导出筛选 ${sourcesFiltered.value.length}`,
+)
+const deleteButtonText = computed(() =>
+  sourceSelect.value.length > 0 ? `删除 ${sourceSelect.value.length}` : '删除',
+)
 
 const deleteSelectSources = async () => {
   const kind = getCurrentSourceKind()
@@ -200,10 +211,17 @@ const outExport = () => {
 
 #source-list {
   margin-top: 6px;
-  height: calc(100vh - 112px - 7px);
+  height: calc(100dvh - 112px - 7px);
   :deep(.el-checkbox) {
     margin-bottom: 4px;
     width: 100%;
+  }
+}
+
+@media screen and (max-width: 750px) {
+  #source-list {
+    height: min(60dvh, 520px);
+    min-height: 320px;
   }
 }
 </style>
