@@ -593,7 +593,7 @@ const defaultSourceList = (kind: SourceKind): Source[] =>
           ruleContent: {},
           ruleExplore: {},
           bookSourceComment:
-            '生产服务会用同源代理抓取搜索页；完整 Legado 规则引擎需要后续单独实现。',
+            '生产服务会用同源服务端接口抓取并解析搜索结果；完整 Legado 规则引擎需要后续单独实现。',
         } as BookSource,
       ]
     : [
@@ -1596,7 +1596,7 @@ const debug = (
     '纯 Web 模式已接管源编辑器，不再依赖外部服务。',
     `当前源：${sourceUrl || '未填写'}`,
     searchKey ? `搜索关键字：${searchKey}` : '当前订阅源调试没有搜索关键字。',
-    '说明：完整 Legado 规则调试依赖原生规则引擎；当前 Web 端只实现了受限搜索解析，生产服务会使用同源代理抓取搜索页。',
+    '说明：完整 Legado 规则调试依赖原生规则引擎；当前生产服务会使用同源服务端接口抓取并解析搜索结果。',
   ]
   const timeoutIds: number[] = []
   const schedule = (callback: () => void, delay: number) => {

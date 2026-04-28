@@ -227,8 +227,7 @@
         v-else-if="sourceSearchActive && books.length === 0"
         class="source-search-empty"
       >
-        没有可显示的书源搜索结果。请查看上方报告，或到书源管理导入允许同源代理访问且使用
-        Web 端可识别规则的书源。
+        没有可显示的书源搜索结果。请查看上方报告，或到书源管理导入目标站可访问且规则较简单的书源。
       </div>
       <book-items
         v-else

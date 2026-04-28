@@ -7,6 +7,7 @@ import https from 'node:https'
 import ipaddr from 'node:net'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import zlib from 'node:zlib'
 import * as cheerio from 'cheerio'
 import pg from 'pg'
 
@@ -39,13 +40,17 @@ const FORBIDDEN_PROXY_HEADER_NAMES = new Set([
   'upgrade',
 ])
 const FORBIDDEN_PROXY_HEADER_PREFIXES = ['proxy-', 'sec-']
-const SOURCE_SEARCH_CONCURRENCY = 4
-const SOURCE_SEARCH_TIMEOUT_MS = 8_000
+const SOURCE_SEARCH_CONCURRENCY = 8
+const SOURCE_SEARCH_TIMEOUT_MS = 6_000
 const SOURCE_SEARCH_RESULT_LIMIT = 50
 const SEARCH_KEY_TOKENS = ['{{key}}', '{{keyword}}', '{{searchKey}}']
 const COMPLEX_LEGADO_RULE_PATTERN =
   /(^\s*(js:|@js:|xpath:|json:|regex:)|@js\b|<js>|&&|\|\|)/i
 const SELECTOR_INDEX_PATTERN = /^(.*)\.(-?\d+)(?::(-?\d+))?$/
+const JSON_ACCESSOR_PATTERN =
+  /^[A-Za-z_$][\w$]*(?:\[(?:-?\d+|\*)\])?(?:\.[A-Za-z_$][\w$]*(?:\[(?:-?\d+|\*)\])?)*$/
+const GZIP_MAGIC_0 = 0x1f
+const GZIP_MAGIC_1 = 0x8b
 
 const DEFAULT_READ_CONFIG = {
   theme: 0,
@@ -675,10 +680,38 @@ const normalizeProxyHeaders = headers => {
   if (!isRecord(headers)) return result
 
   Object.entries(headers).forEach(([key, value]) => {
-    if (typeof value !== 'string' || isForbiddenProxyHeader(key)) return
-    result[key] = value
+    const normalizedKey = normalizeHeaderToken(key)
+    if (
+      typeof value !== 'string' ||
+      !normalizedKey ||
+      isForbiddenProxyHeader(normalizedKey)
+    ) {
+      return
+    }
+    result[normalizedKey] = value
   })
   return result
+}
+
+const decodeResponseContent = (content, contentEncoding, limit) => {
+  const encoding = String(contentEncoding ?? '').toLocaleLowerCase()
+  let decoded = content
+
+  if (
+    encoding.includes('gzip') ||
+    (content[0] === GZIP_MAGIC_0 && content[1] === GZIP_MAGIC_1)
+  ) {
+    decoded = zlib.gunzipSync(content)
+  } else if (encoding.includes('br')) {
+    decoded = zlib.brotliDecompressSync(content)
+  } else if (encoding.includes('deflate')) {
+    decoded = zlib.inflateSync(content)
+  }
+
+  if (decoded.byteLength > limit) {
+    throw new Error('远程内容解压后超过大小限制')
+  }
+  return decoded
 }
 
 const requestBytes = async (
@@ -744,12 +777,20 @@ const requestBytes = async (
           }
           chunks.push(chunk)
         })
-        response.on('end', () =>
-          resolve({
-            finalUrl: response.responseUrl ?? url.toString(),
-            content: Buffer.concat(chunks),
-          }),
-        )
+        response.on('end', () => {
+          try {
+            resolve({
+              finalUrl: response.responseUrl ?? url.toString(),
+              content: decodeResponseContent(
+                Buffer.concat(chunks),
+                response.headers['content-encoding'],
+                limit,
+              ),
+            })
+          } catch (error) {
+            reject(error)
+          }
+        })
       },
     )
     request.on('timeout', () =>
@@ -787,13 +828,23 @@ const sourceSearchReport = (source, status, message, count = 0) => ({
   message,
 })
 
+const normalizeHeaderToken = value =>
+  value
+    .trim()
+    .replace(/,$/, '')
+    .replace(/^['"]|['"]$/g, '')
+    .trim()
+
 const parseSourceHeaders = rawHeader => {
   const headers = {}
   const warnings = []
   const trimmed = rawHeader?.trim()
   if (!trimmed) return { headers, warnings }
 
-  const appendHeader = (key, value) => {
+  const appendHeader = (rawKey, rawValue) => {
+    const key = normalizeHeaderToken(rawKey)
+    const value = normalizeHeaderToken(rawValue)
+    if (!key || !value) return
     if (isForbiddenProxyHeader(key)) {
       warnings.push(`已忽略代理禁止转发的请求头 ${key}`)
       return
@@ -816,8 +867,8 @@ const parseSourceHeaders = rawHeader => {
   trimmed.split(/\r?\n/).forEach(line => {
     const separatorIndex = line.search(/[:=]/)
     if (separatorIndex <= 0) return
-    const key = line.slice(0, separatorIndex).trim()
-    const value = line.slice(separatorIndex + 1).trim()
+    const key = normalizeHeaderToken(line.slice(0, separatorIndex))
+    const value = normalizeHeaderToken(line.slice(separatorIndex + 1))
     if (key && value) appendHeader(key, value)
   })
   return { headers, warnings: unique(warnings) }
@@ -829,7 +880,10 @@ const fillSearchKey = (template, searchKey) => {
     (text, token) => text.split(token).join(encodedKey),
     template,
   )
-  return withSearchKey.split('{{page}}').join('1')
+  return withSearchKey
+    .replace(/\{\{\s*\(?\s*page\s*-\s*1\s*\)?\s*\*\s*\d+\s*\}\}/g, '0')
+    .split('{{page}}')
+    .join('1')
 }
 
 const splitSearchUrl = searchUrl => {
@@ -864,8 +918,13 @@ const buildSourceSearchRequest = (source, searchKey) => {
   const { headers, warnings } = parseSourceHeaders(source.header)
   if (isRecord(config.headers)) {
     Object.entries(config.headers).forEach(([key, value]) => {
-      if (typeof value === 'string' && !isForbiddenProxyHeader(key)) {
-        headers[key] = value
+      const normalizedKey = normalizeHeaderToken(key)
+      if (
+        typeof value === 'string' &&
+        normalizedKey &&
+        !isForbiddenProxyHeader(normalizedKey)
+      ) {
+        headers[normalizedKey] = value
       }
     })
   }
@@ -962,8 +1021,7 @@ const applySelectorIndex = (nodes, startIndex, endIndex) => {
 const selectRuleNodes = ($, scopes, rawSelector) => {
   const { selector, startIndex, endIndex } = selectorWithIndex(rawSelector)
   return scopes.flatMap(scope => {
-    const nodes =
-      selector === '' ? [scope] : $(scope).find(selector).toArray()
+    const nodes = selector === '' ? [scope] : $(scope).find(selector).toArray()
     return applySelectorIndex(nodes, startIndex, endIndex)
   })
 }
@@ -1017,6 +1075,36 @@ const readOptionalRuleValue = ($, scope, rule, baseUrl) => {
 }
 
 const isJsonPathRule = rule => /^\s*\$/.test(rule ?? '')
+
+const splitRuleAlternatives = rule =>
+  String(rule ?? '')
+    .split('||')
+    .map(item => item.trim())
+    .filter(Boolean)
+
+const splitRuleConjunctions = rule =>
+  String(rule ?? '')
+    .split('&&')
+    .map(item => item.trim())
+    .filter(Boolean)
+
+const isJsonAccessorRule = rule =>
+  isJsonPathRule(rule) || JSON_ACCESSOR_PATTERN.test(rule ?? '')
+
+const isJsonPathUnionRule = rule => {
+  const alternatives = splitRuleAlternatives(rule)
+  return alternatives.length > 0 && alternatives.every(isJsonAccessorRule)
+}
+
+const isJsonPathCompoundRule = rule => {
+  const alternatives = splitRuleAlternatives(rule)
+  return (
+    alternatives.length > 0 &&
+    alternatives.every(alternative =>
+      splitRuleConjunctions(alternative).every(isJsonAccessorRule),
+    )
+  )
+}
 
 const collectJsonProperty = (value, property, results = []) => {
   if (Array.isArray(value)) {
@@ -1084,24 +1172,77 @@ const readJsonPathValues = (value, path) => {
     )
 }
 
+const readJsonAccessorValues = (value, path) => {
+  const trimmed = path.trim()
+  if (isJsonPathRule(trimmed)) return readJsonPathValues(value, trimmed)
+  if (!JSON_ACCESSOR_PATTERN.test(trimmed)) return []
+
+  return trimmed
+    .split('.')
+    .filter(Boolean)
+    .reduce(
+      (current, token) => current.flatMap(item => expandJsonToken(item, token)),
+      [value],
+    )
+}
+
 const readJsonPathText = (value, path) =>
-  readJsonPathValues(value, path)
+  readJsonAccessorValues(value, path)
     .map(normalizeRuleText)
     .filter(Boolean)
     .join(',')
+
+const readJsonPathUnionValues = (value, rule) => {
+  const results = []
+  const seen = new Set()
+  splitRuleAlternatives(rule).forEach(path => {
+    readJsonAccessorValues(value, path).forEach(item => {
+      const key = JSON.stringify(item)
+      if (seen.has(key)) return
+      seen.add(key)
+      results.push(item)
+    })
+  })
+  return results
+}
+
+const readJsonCompoundText = (item, ruleBody) =>
+  splitRuleAlternatives(ruleBody)
+    .map(alternative =>
+      splitRuleConjunctions(alternative)
+        .map(path => readJsonPathText(item, path))
+        .filter(Boolean)
+        .join(','),
+    )
+    .find(Boolean) ?? ''
+
+const stripJsonVariableOperators = ruleBody =>
+  ruleBody.replace(/@put:\{[^}]+\}/g, '')
+
+const normalizeJsonRuleBody = (ruleBody, item) =>
+  stripJsonVariableOperators(ruleBody).replace(
+    /@get:\{([^}]+)\}/g,
+    (_, expression) => readJsonPathText(item, expression.trim()),
+  )
 
 const readJsonRuleValue = (item, rule) => {
   const parsedRule = parseRule(rule)
   if (parsedRule === undefined) return ''
 
   const [ruleBody] = rule.trim().split('##')
-  const templateValue = ruleBody.replace(/\{\{(.*?)\}\}/g, (_, expression) => {
-    const path = expression.trim()
-    return path === '' ? '' : readJsonPathText(item, path)
-  })
-  const value = isJsonPathRule(ruleBody)
-    ? readJsonPathText(item, ruleBody)
-    : templateValue
+  const normalizedRuleBody = normalizeJsonRuleBody(ruleBody, item)
+  const templateValue = normalizedRuleBody.replace(
+    /\{\{(.*?)\}\}/g,
+    (_, expression) => {
+      const path = expression.trim()
+      return path === '' ? '' : readJsonPathText(item, path)
+    },
+  )
+  const value = normalizedRuleBody.includes('{{')
+    ? templateValue
+    : isJsonPathCompoundRule(normalizedRuleBody)
+      ? readJsonCompoundText(item, normalizedRuleBody)
+      : templateValue
   return applyRuleReplacements(value, parsedRule.replacements)
 }
 
@@ -1144,7 +1285,15 @@ const resolveImageUrl = (value, baseUrl) => {
   }
 }
 
-const isComplexLegadoRule = rule => COMPLEX_LEGADO_RULE_PATTERN.test(rule ?? '')
+const isComplexLegadoRule = rule => {
+  const [ruleBody] = String(rule ?? '')
+    .trim()
+    .split('##')
+  if (isJsonPathCompoundRule(stripJsonVariableOperators(ruleBody))) {
+    return false
+  }
+  return COMPLEX_LEGADO_RULE_PATTERN.test(rule ?? '')
+}
 
 const buildSourceSearchBook = ($, source, node, baseUrl, index) => {
   const rule = source.ruleSearch ?? {}
@@ -1238,6 +1387,14 @@ const isSelectorSyntaxError = error =>
   /(selector|pseudo|expected|unmatched|empty sub-selector|invalid)/i.test(
     error.message,
   )
+
+const isAnonymousAccessRejected = (error, source) =>
+  error instanceof Error &&
+  /HTTP 40[13]/.test(error.message) &&
+  (source.enabledCookieJar ||
+    Boolean(source.loginUrl) ||
+    Boolean(source.loginUi) ||
+    Boolean(source.loginCheckJs))
 
 const searchSingleBookSource = async (source, searchKey) => {
   if (source.bookSourceUrl === 'https://example.com') {
@@ -1337,8 +1494,11 @@ const searchSingleBookSource = async (source, searchKey) => {
       timeout: SOURCE_SEARCH_TIMEOUT_MS,
     })
     const text = content.toString('utf8')
-    const books = isJsonPathRule(listRule)
-      ? readJsonPathValues(JSON.parse(text.replace(/^\uFEFF/, '')), listRule)
+    const books = isJsonPathUnionRule(listRule)
+      ? readJsonPathUnionValues(
+          JSON.parse(text.replace(/^\uFEFF/, '')),
+          listRule,
+        )
           .map((item, index) =>
             buildJsonSourceSearchBook(source, item, finalUrl, index),
           )
@@ -1371,16 +1531,21 @@ const searchSingleBookSource = async (source, searchKey) => {
     }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
-    const status = isSelectorSyntaxError(error) ? 'unsupported' : 'failed'
+    const status =
+      isSelectorSyntaxError(error) || isAnonymousAccessRejected(error, source)
+        ? 'unsupported'
+        : 'failed'
     return {
       books: [],
       report: sourceSearchReport(
         source,
         status,
         appendWarnings(
-          status === 'unsupported'
-            ? `规则语法不支持：${message}`
-            : `搜索失败：${message}`,
+          isAnonymousAccessRejected(error, source)
+            ? `目标站拒绝匿名搜索请求：${message}`
+            : status === 'unsupported'
+              ? `规则语法不支持：${message}`
+              : `搜索失败：${message}`,
           warnings,
         ),
       ),
@@ -1682,9 +1847,7 @@ const serveStatic = async (req, res, url) => {
     send(res, 200, buffer, {
       'Content-Type': contentType,
       ETag: tag,
-      'Cache-Control': filePath.endsWith('index.html')
-        ? 'no-store'
-        : 'no-cache',
+      'Cache-Control': 'no-store',
     })
   } catch {
     send(res, 404, 'Not Found', { 'Content-Type': 'text/plain; charset=utf-8' })
