@@ -2850,6 +2850,53 @@ const sourceFilterFieldAlias = {
   规则: 'rule',
 }
 
+const sourceFilterEnabledValues = new Set(['all', 'enabled', 'disabled'])
+const sourceFilterFeatureValues = new Set([
+  'all',
+  'searchable',
+  'unsearchable',
+  'cookie',
+  'js',
+  'login',
+])
+const sourceFilterFieldValues = new Set([
+  'all',
+  'name',
+  'url',
+  'group',
+  'comment',
+  'rule',
+])
+
+const normalizeSourceFilterOption = (filter, key, allowedValues) => {
+  const value = filter?.[key] ?? 'all'
+  if (typeof value !== 'string' || !allowedValues.has(value)) {
+    throw badRequest(`书源筛选 ${key} 参数无效`)
+  }
+  return value
+}
+
+const normalizeSourceSearchFilter = filter => {
+  const keyword = filter?.keyword ?? ''
+  if (typeof keyword !== 'string') {
+    throw badRequest('书源筛选 keyword 必须是字符串')
+  }
+  return {
+    keyword,
+    enabled: normalizeSourceFilterOption(
+      filter,
+      'enabled',
+      sourceFilterEnabledValues,
+    ),
+    feature: normalizeSourceFilterOption(
+      filter,
+      'feature',
+      sourceFilterFeatureValues,
+    ),
+    field: normalizeSourceFilterOption(filter, 'field', sourceFilterFieldValues),
+  }
+}
+
 const sourceFilterTokenMatches = (source, token, defaultField) => {
   const match = token.match(/^([^:：]+)[:：](.+)$/)
   const aliasedField = match?.[1] ? sourceFilterFieldAlias[match[1]] : undefined
@@ -2862,12 +2909,10 @@ const sourceFilterTokenMatches = (source, token, defaultField) => {
 }
 
 const sourceMatchesSearchFilter = (source, filter) => {
-  const enabled = filter?.enabled ?? 'all'
-  const feature = filter?.feature ?? 'all'
-  const field = filter?.field ?? 'all'
+  const { enabled, feature, field, keyword } = filter
   if (!sourceEnabledMatches(source, enabled)) return false
   if (!sourceFeatureMatches(source, feature)) return false
-  const tokens = normalizeSearchText(filter?.keyword)
+  const tokens = normalizeSearchText(keyword)
     .split(/\s+/)
     .filter(Boolean)
   return tokens.every(token => sourceFilterTokenMatches(source, token, field))
@@ -2908,9 +2953,10 @@ const searchBookSources = async (keyword, sourceFilter = {}) => {
     throw badRequest(`搜索关键词不能超过 ${SEARCH_KEYWORD_MAX_LENGTH} 个字符`)
   }
 
+  const normalizedSourceFilter = normalizeSourceSearchFilter(sourceFilter)
   const sources = (await getSources('bookSource')).sort(compareBookSources)
   const filteredSources = sources.filter(source =>
-    sourceMatchesSearchFilter(source, sourceFilter),
+    sourceMatchesSearchFilter(source, normalizedSourceFilter),
   )
   const results = await mapWithConcurrency(
     filteredSources,
