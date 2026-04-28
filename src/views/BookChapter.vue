@@ -291,6 +291,7 @@ const chapterData = ref<{ index: number; content: string[]; title: string }[]>(
   [],
 )
 let activeContentRequestId = 0
+let disposed = false
 const noPoint = ref(true)
 const normalizeReadingNumber = (value: string | number | null) => {
   const number = Number(value ?? 0)
@@ -301,9 +302,10 @@ const clampChapterIndex = (index: number, chapterCount: number) => {
   return Math.min(normalizeReadingNumber(index), chapterCount - 1)
 }
 const getContent = (index: number, reloadChapter = true, chapterPos = 0) => {
+  const bookUrl = store.readingBook.bookUrl
   const chapter = Number.isInteger(index) ? catalog.value[index] : undefined
-  if (chapter === undefined) {
-    ElMessage.error('章节不存在或已被删除')
+  if (chapter === undefined || chapter.bookUrl !== bookUrl) {
+    ElMessage.error('章节不存在或目录已过期，请重新打开书籍')
     return
   }
 
@@ -316,16 +318,22 @@ const getContent = (index: number, reloadChapter = true, chapterPos = 0) => {
     saveReadingBookProgressToBrowser(index, chapterPos)
     chapterData.value = []
   }
-  const bookUrl = store.readingBook.bookUrl
   const { title, index: chapterIndex } = chapter
+  const requestBookUrl = bookUrl
   const requestId = reloadChapter
     ? ++activeContentRequestId
     : activeContentRequestId
 
   loadingWrapper(
-    API.getBookContent(bookUrl, chapterIndex).then(
+    API.getBookContent(requestBookUrl, chapterIndex).then(
       res => {
-        if (requestId !== activeContentRequestId) return
+        if (
+          disposed ||
+          requestId !== activeContentRequestId ||
+          store.readingBook.bookUrl !== requestBookUrl
+        ) {
+          return
+        }
         if (res.data.isSuccess) {
           const data = res.data.data
           const content = data.split(/\n+/)
@@ -344,7 +352,13 @@ const getContent = (index: number, reloadChapter = true, chapterPos = 0) => {
         }
       },
       err => {
-        if (requestId !== activeContentRequestId) return
+        if (
+          disposed ||
+          requestId !== activeContentRequestId ||
+          store.readingBook.bookUrl !== requestBookUrl
+        ) {
+          return
+        }
         const content = ['获取章节内容失败！']
         chapterData.value.push({ index, content, title })
         store.setShowContent(true)
@@ -524,12 +538,16 @@ onMounted(async () => {
     chapterPos: initialChapterPos,
     isSearchBook,
   }
+  store.prepareReadingBook(book)
   onResize()
   window.addEventListener('resize', onResize)
+  const isActiveOpen = () =>
+    !disposed && store.readingBook.bookUrl === book.bookUrl
   loadingWrapper(
     store
       .loadWebCatalog(book)
       .then(chapters => {
+        if (!isActiveOpen()) return
         if (chapters.length === 0) {
           ElMessage.warning('书籍目录为空，即将自动返回书架页面...')
           scheduleToShelf()
@@ -541,8 +559,10 @@ onMounted(async () => {
           chapters.length,
         )
         book.chapterPos = normalizeReadingNumber(book.chapterPos)
+        if (!isActiveOpen()) return
         store.setReadingBook(book)
         getContent(book.chapterIndex, true, book.chapterPos)
+        if (!isActiveOpen()) return
         window.addEventListener('keyup', handleKeyPress)
         window.addEventListener('keydown', ignoreKeyPress)
         // 兼容Safari < 14
@@ -559,12 +579,14 @@ onMounted(async () => {
         document.title = `${name as string} | ${chapters[book.chapterIndex].title}`
       })
       .catch(() => {
-        scheduleToShelf()
+        if (isActiveOpen()) scheduleToShelf()
       }),
   )
 })
 
 onUnmounted(() => {
+  disposed = true
+  activeContentRequestId += 1
   window.removeEventListener('keyup', handleKeyPress)
   window.removeEventListener('keydown', ignoreKeyPress)
   window.removeEventListener('resize', onResize)

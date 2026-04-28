@@ -3,6 +3,7 @@ import type {
   Book,
   BookChapter,
   BookProgress,
+  SourceBookImportResult,
   SourceSearchBook,
   SourceSearchReport,
   SourceSearchResult,
@@ -1575,6 +1576,15 @@ const importLocalTextBook = async (file: File): ApiResult<Book> => {
   return ok(book)
 }
 
+const importSourceBook = async (
+  book: SourceSearchBook,
+): ApiResult<SourceBookImportResult> => {
+  void book
+  return fail<SourceBookImportResult>(
+    '浏览器本地模式暂不支持将书源搜索结果加入书架，请使用生产服务运行',
+  )
+}
+
 const getSources = async (
   kind: SourceKind = getCurrentSourceKind(),
 ): ApiResult<Source[]> => ok(readSources(kind))
@@ -1752,6 +1762,7 @@ export default {
   searchBookSources,
   deleteBook,
   importLocalTextBook,
+  importSourceBook,
   exportStandaloneData,
   importStandaloneData,
   clearStandaloneData,

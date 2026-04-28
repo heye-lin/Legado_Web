@@ -3,7 +3,7 @@
     <div class="wrapper">
       <div
         class="book"
-        v-for="book in books"
+        v-for="book in props.books"
         :key="getBookKey(book)"
         role="button"
         tabindex="0"
@@ -47,11 +47,25 @@
           <div v-if="book.latestChapterTitle" class="last-chapter">
             最新：{{ book.latestChapterTitle }}
           </div>
-          <el-tag v-if="isSourceSearchBook(book)" size="small" effect="plain">
-            打开来源站
-          </el-tag>
+          <div v-if="isSourceSearchBook(book)" class="source-book-actions">
+            <el-tag size="small" effect="plain"> 点击卡片打开来源站 </el-tag>
+            <el-button
+              class="import-book"
+              text
+              type="success"
+              size="small"
+              :loading="isBookImporting(book)"
+              :disabled="isBookImporting(book)"
+              :aria-label="`加入书架：${book.name}`"
+              @click.stop="handleImport(book)"
+              @keydown.enter.stop
+              @keydown.space.stop
+            >
+              加入书架
+            </el-button>
+          </div>
           <el-button
-            v-if="!isSourceSearchBook(book)"
+            v-else
             class="delete-book"
             text
             type="danger"
@@ -72,20 +86,34 @@ import API from '@api'
 
 type BookItem = Book | SourceSearchBook
 
-defineProps<{
-  books: BookItem[]
-}>()
+const props = withDefaults(
+  defineProps<{
+    books: BookItem[]
+    importingBookKeys?: ReadonlySet<string>
+  }>(),
+  {
+    importingBookKeys: () => new Set<string>(),
+  },
+)
 
 const emit = defineEmits<{
   bookClick: [book: BookItem]
   bookDelete: [book: Book]
+  bookImport: [book: SourceSearchBook]
 }>()
 const isSourceSearchBook = (book: BookItem): book is SourceSearchBook =>
   'entryType' in book && book.entryType === 'source-search'
 const handleClick = (book: BookItem) => emit('bookClick', book)
 const handleDelete = (book: Book) => emit('bookDelete', book)
+const handleImport = (book: BookItem) => {
+  if (isSourceSearchBook(book) && !isBookImporting(book)) {
+    emit('bookImport', book)
+  }
+}
 const getBookKey = (book: BookItem) =>
   isSourceSearchBook(book) ? book.resultKey : book.bookUrl
+const isBookImporting = (book: BookItem) =>
+  isSourceSearchBook(book) && props.importingBookKeys.has(getBookKey(book))
 const getBookActionLabel = (book: BookItem) =>
   isSourceSearchBook(book)
     ? `在新标签页打开《${book.name}》的来源站详情`
@@ -119,19 +147,13 @@ const getSourceDescription = (book: BookItem) => {
 }
 
 const getCover = (book: BookItem) => {
-  const { bookUrl, coverUrl } = book
-  if (!coverUrl) {
-    return isSourceSearchBook(book)
-      ? getPlaceholderCover(book)
-      : API.getProxyCoverUrl(bookUrl)
-  }
+  const { coverUrl } = book
+  if (!coverUrl) return getPlaceholderCover(book)
   return isLegadoUrl(coverUrl) ? API.getProxyCoverUrl(coverUrl) : coverUrl
 }
 const proxyImage = (evt: Event, book: BookItem) => {
   const target = evt.target as HTMLImageElement
-  target.src = isSourceSearchBook(book)
-    ? getPlaceholderCover(book)
-    : API.getProxyCoverUrl(target.src)
+  target.src = getPlaceholderCover(book)
 }
 </script>
 
@@ -220,6 +242,17 @@ const proxyImage = (evt: Event, book: BookItem) => {
 
           .author {
             flex: 0 1 45%;
+          }
+        }
+
+        .source-book-actions {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          max-width: 100%;
+
+          .import-book {
+            padding-left: 0;
           }
         }
 

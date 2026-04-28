@@ -5,6 +5,8 @@ import type {
   Book,
   BookChapter,
   BookProgress,
+  SourceBookImportResult,
+  SourceSearchBook,
   SourceSearchResult,
 } from '@/book'
 import type { Source } from '@/source'
@@ -15,15 +17,28 @@ import { getSourceUniqueKey } from '@/utils/source'
 import { type SourceKind, getCurrentSourceKind } from '@/utils/sourceKind'
 
 type ApiResult<T> = Promise<{ data: LegadoApiResponse<T> }>
-type RequestOptions = RequestInit & { fallbackLabel?: string }
+type RequestOptions = RequestInit & {
+  allowApiErrorFallback?: boolean
+}
 
 const JSON_HEADERS = { 'Content-Type': 'application/json' }
 const SERVER_SOURCE_SYNC_KEY = 'legado.pg.serverSourceSynced'
+const DATABASE_UNAVAILABLE_ERROR_CODE = 'DATABASE_UNAVAILABLE'
 
 let serverAvailable: boolean | undefined
 const serverAvailabilityListeners = new Set<
   (available: boolean | undefined) => void
 >()
+
+class ApiRequestError extends Error {
+  constructor(
+    message: string,
+    readonly allowFallback: boolean,
+  ) {
+    super(message)
+    this.name = 'ApiRequestError'
+  }
+}
 
 const getErrorMessage = (error: unknown) =>
   error instanceof Error ? error.message : String(error)
@@ -49,16 +64,40 @@ const request = async <T>(
   path: string,
   options: RequestOptions = {},
 ): Promise<T> => {
-  const response = await fetch(path, {
-    ...options,
-    headers: {
-      ...(options.body === undefined ? {} : JSON_HEADERS),
-      ...options.headers,
-    },
-  })
-  const payload = (await response.json()) as LegadoApiResponse<T>
+  const allowRequestFallback = options.allowApiErrorFallback !== false
+  let response: Response
+  try {
+    response = await fetch(path, {
+      ...options,
+      headers: {
+        ...(options.body === undefined ? {} : JSON_HEADERS),
+        ...options.headers,
+      },
+    })
+  } catch (error) {
+    throw new ApiRequestError(
+      `服务端请求失败：${getErrorMessage(error)}`,
+      allowRequestFallback,
+    )
+  }
+
+  let payload: LegadoApiResponse<T>
+  try {
+    payload = (await response.json()) as LegadoApiResponse<T>
+  } catch (error) {
+    throw new ApiRequestError(
+      `服务端响应不是 JSON：${getErrorMessage(error)}`,
+      allowRequestFallback,
+    )
+  }
   if (!response.ok || !payload.isSuccess) {
-    throw new Error(payload.errorMsg || `HTTP ${response.status}`)
+    const databaseUnavailable =
+      response.status >= 500 &&
+      payload.errorCode === DATABASE_UNAVAILABLE_ERROR_CODE
+    setServerAvailable(databaseUnavailable ? false : true)
+    const message = payload.errorMsg || `HTTP ${response.status}`
+    const allowFallback = allowRequestFallback && databaseUnavailable
+    throw new ApiRequestError(message, allowFallback)
   }
   setServerAvailable(true)
   return payload.data
@@ -70,9 +109,12 @@ const withFallback = async <T>(
 ): Promise<T> => {
   try {
     return await run()
-  } catch {
-    setServerAvailable(false)
-    return fallback()
+  } catch (error) {
+    if (error instanceof ApiRequestError && error.allowFallback) {
+      setServerAvailable(false)
+      return fallback()
+    }
+    throw error
   }
 }
 
@@ -80,6 +122,17 @@ const withApiFallback = async <T>(
   run: () => ApiResult<T>,
   fallback: () => ApiResult<T>,
 ): ApiResult<T> => withFallback(run, fallback)
+
+const apiFailure = <T>(
+  error: unknown,
+  data: T,
+): { data: LegadoApiResponse<T> } => ({
+  data: {
+    isSuccess: false,
+    errorMsg: getErrorMessage(error),
+    data,
+  },
+})
 
 const sourceIsExample = (source: Source) =>
   getSourceUniqueKey(source) === 'https://example.com' ||
@@ -153,7 +206,7 @@ const saveReadConfig = async (config: webReadConfig): ApiResult<string> =>
         method: 'PUT',
         body: JSON.stringify(normalizeReadConfig(config)),
       })
-      await standaloneApi.saveReadConfig(config)
+      await standaloneApi.saveReadConfig(config).catch(() => undefined)
       return { data: { isSuccess: true, errorMsg: '', data: message } }
     },
     () => standaloneApi.saveReadConfig(config),
@@ -185,36 +238,47 @@ const getBookShelf = async (): ApiResult<Book[]> =>
     () => standaloneApi.getBookShelf(),
   )
 
-const getChapterList = async (bookUrl: string): ApiResult<BookChapter[]> =>
-  withApiFallback(
-    async () => ({
-      data: {
-        isSuccess: true,
-        errorMsg: '',
-        data: await request<BookChapter[]>(
-          apiPath('/api/chapters', { bookUrl }),
-        ),
-      },
-    }),
-    () => standaloneApi.getChapterList(bookUrl),
-  )
+const getChapterList = async (bookUrl: string): ApiResult<BookChapter[]> => {
+  try {
+    return await withApiFallback(
+      async () => ({
+        data: {
+          isSuccess: true,
+          errorMsg: '',
+          data: await request<BookChapter[]>(
+            apiPath('/api/chapters', { bookUrl }),
+          ),
+        },
+      }),
+      () => standaloneApi.getChapterList(bookUrl),
+    )
+  } catch (error) {
+    return apiFailure(error, [])
+  }
+}
 
 const getBookContent = async (
   bookUrl: string,
   chapterIndex: number,
-): ApiResult<string> =>
-  withApiFallback(
-    async () => ({
-      data: {
-        isSuccess: true,
-        errorMsg: '',
-        data: await request<string>(
-          apiPath('/api/chapter-content', { bookUrl, index: chapterIndex }),
-        ),
-      },
-    }),
-    () => standaloneApi.getBookContent(bookUrl, chapterIndex),
-  )
+): ApiResult<string> => {
+  try {
+    return await withApiFallback(
+      async () => ({
+        data: {
+          isSuccess: true,
+          errorMsg: '',
+          data: await request<string>(
+            apiPath('/api/chapter-content', { bookUrl, index: chapterIndex }),
+            { allowApiErrorFallback: serverAvailable !== true },
+          ),
+        },
+      }),
+      () => standaloneApi.getBookContent(bookUrl, chapterIndex),
+    )
+  } catch (error) {
+    return apiFailure(error, '')
+  }
+}
 
 const searchBookSources = async (
   searchKey: string,
@@ -288,6 +352,27 @@ const importLocalTextBook = async (file: File): ApiResult<Book> =>
     () => standaloneApi.importLocalTextBook(file),
   )
 
+const importSourceBook = async (
+  book: SourceSearchBook,
+): ApiResult<SourceBookImportResult> =>
+  withApiFallback(
+    async () => ({
+      data: {
+        isSuccess: true,
+        errorMsg: '',
+        data: await request<SourceBookImportResult>(
+          '/api/books/import-source',
+          {
+            method: 'POST',
+            body: JSON.stringify(book),
+            allowApiErrorFallback: false,
+          },
+        ),
+      },
+    }),
+    () => standaloneApi.importSourceBook(book),
+  )
+
 const exportStandaloneData = async (): ApiResult<StandaloneBackupData> =>
   withApiFallback(
     async () => ({
@@ -356,7 +441,7 @@ const saveSource = async (
         method: 'POST',
         body: JSON.stringify(source),
       })
-      await standaloneApi.saveSource(source, kind)
+      await standaloneApi.saveSource(source, kind).catch(() => undefined)
       localStorage.setItem(`${SERVER_SOURCE_SYNC_KEY}.${kind}`, '1')
       return { data: { isSuccess: true, errorMsg: '', data: message } }
     },
@@ -376,7 +461,7 @@ const saveSources = async (
           body: JSON.stringify(sources),
         },
       )
-      await standaloneApi.saveSources(savedSources, kind)
+      await standaloneApi.saveSources(savedSources, kind).catch(() => undefined)
       localStorage.setItem(`${SERVER_SOURCE_SYNC_KEY}.${kind}`, '1')
       return { data: { isSuccess: true, errorMsg: '', data: savedSources } }
     },
@@ -393,7 +478,7 @@ const deleteSource = async (
         method: 'DELETE',
         body: JSON.stringify(sources),
       })
-      await standaloneApi.deleteSource(sources, kind)
+      await standaloneApi.deleteSource(sources, kind).catch(() => undefined)
       return { data: { isSuccess: true, errorMsg: '', data: message } }
     },
     () => standaloneApi.deleteSource(sources, kind),
@@ -435,6 +520,7 @@ export default {
   searchBookSources,
   deleteBook,
   importLocalTextBook,
+  importSourceBook,
   exportStandaloneData,
   importStandaloneData,
   clearStandaloneData,

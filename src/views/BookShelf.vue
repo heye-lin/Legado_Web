@@ -156,7 +156,7 @@
       >
         <div class="shelf-feature-text">
           <strong>书源搜索</strong>
-          <span>先导入或保存书源，再搜索在线书籍。</span>
+          <span>先导入或保存书源，再搜索在线书籍并加入书架。</span>
         </div>
         <div class="shelf-feature-actions">
           <el-button type="warning" @click="openBookSourceManager">
@@ -240,15 +240,16 @@
           </el-button>
         </div>
         <div class="source-search-tip">
-          搜索结果会在新标签页打开来源站详情；生产服务通过同源服务端接口搜索书源，不依赖浏览器
-          CORS；复杂 JS、登录、CookieJar 和反爬规则仍可能不支持。
+          点击搜索结果卡片会在新标签页打开来源站详情；点击“加入书架”会通过生产服务解析目录并保存到书架。
+          纯静态/浏览器本地模式暂不支持书源结果入库；复杂 JS、登录、CookieJar
+          和反爬规则仍可能不支持。
         </div>
       </div>
       <div v-if="showStandaloneEmptyState" class="empty-shelf-state">
         <div class="empty-shelf-title">导入 TXT 开始阅读</div>
         <div class="empty-shelf-description">
           <p>选择本地 TXT 文件，或直接拖拽到书架区域导入。</p>
-          <p>也可以先进入书源管理导入书源，再进行书源搜索。</p>
+          <p>也可以先进入书源管理导入书源，再搜索在线书籍并加入书架。</p>
         </div>
         <div class="empty-shelf-actions">
           <el-button type="primary" size="large" @click="fileInput?.click()">
@@ -285,8 +286,10 @@
       <book-items
         v-else
         :books="books"
+        :importingBookKeys="importingSourceBookKeys"
         @bookClick="handleBookClick"
         @bookDelete="handleBookDelete"
+        @bookImport="handleBookImport"
       ></book-items>
       <div v-if="isDraggingFile" class="drag-import-mask">
         <div class="drag-import-title">释放鼠标导入 TXT</div>
@@ -299,7 +302,9 @@
       width="min(420px, calc(100vw - 32px))"
     >
       <div class="source-search-dialog">
-        <p>从已导入并启用的书源中搜索书籍。未导入书源时，请先进入书源管理。</p>
+        <p>
+          从已导入并启用的书源中搜索书籍。生产服务支持将结果加入书架；未导入书源时，请先进入书源管理。
+        </p>
         <el-input
           v-model="sourceSearchInput"
           placeholder="输入书名、作者或关键词"
@@ -376,6 +381,7 @@ const searchWord = ref('')
 const searchPlaceholder = '筛选本地书架'
 const sourceSearchBooks = shallowRef<SourceSearchBook[]>([])
 const sourceSearchReports = ref<SourceSearchReport[]>([])
+const sourceSearchErrorMessage = ref('')
 const sourceSearchActive = ref(false)
 const sourceSearchKeyword = ref('')
 const isSearchingSources = ref(false)
@@ -472,8 +478,10 @@ const sourceSearchReportToggleText = computed(() =>
     ? '收起搜索明细'
     : `查看全部 ${sourceSearchReports.value.length} 条搜索明细`,
 )
-const sourceSearchEmptyMessage = computed(() =>
-  getSourceSearchEmptyMessage(sourceSearchReports.value),
+const sourceSearchEmptyMessage = computed(
+  () =>
+    sourceSearchErrorMessage.value ||
+    getSourceSearchEmptyMessage(sourceSearchReports.value),
 )
 
 const sourceSearchReportStatusText = (status: SourceSearchReport['status']) =>
@@ -518,6 +526,7 @@ const resetSourceSearchState = () => {
   sourceSearchActive.value = false
   sourceSearchBooks.value = []
   sourceSearchReports.value = []
+  sourceSearchErrorMessage.value = ''
   sourceSearchKeyword.value = ''
   sourceSearchReportsExpanded.value = false
 }
@@ -550,6 +559,7 @@ const searchBook = async () => {
     })
     if (currentRunId !== sourceSearchRunId || controller.signal.aborted) return
     if (!result.data.isSuccess) {
+      sourceSearchErrorMessage.value = result.data.errorMsg
       ElMessage.error(result.data.errorMsg)
       return
     }
@@ -562,7 +572,8 @@ const searchBook = async () => {
     }
   } catch (error) {
     if (currentRunId !== sourceSearchRunId || controller.signal.aborted) return
-    ElMessage.error(`书源搜索失败：${getErrorMessage(error)}`)
+    sourceSearchErrorMessage.value = `书源搜索失败：${getErrorMessage(error)}`
+    ElMessage.error(sourceSearchErrorMessage.value)
   } finally {
     if (currentRunId === sourceSearchRunId) {
       isSearchingSources.value = false
@@ -653,10 +664,52 @@ const isSourceSearchBook = (
 ): book is SourceSearchBook =>
   'entryType' in book && book.entryType === 'source-search'
 
+const isHttpUrl = (value: string) => {
+  try {
+    const url = new URL(value)
+    return url.protocol === 'http:' || url.protocol === 'https:'
+  } catch {
+    return false
+  }
+}
+
+const importingSourceBookKeys = ref(new Set<string>())
+const setSourceBookImporting = (key: string, importing: boolean) => {
+  const next = new Set(importingSourceBookKeys.value)
+  if (importing) next.add(key)
+  else next.delete(key)
+  importingSourceBookKeys.value = next
+}
+
+const handleBookImport = async (book: SourceSearchBook) => {
+  const key = book.resultKey
+  if (importingSourceBookKeys.value.has(key)) return
+  setSourceBookImporting(key, true)
+  try {
+    let imported: Awaited<ReturnType<typeof store.importSourceBook>> | undefined
+    await loadingWrapper(
+      store.importSourceBook(book).then(result => {
+        imported = result
+      }),
+    )
+    if (imported === undefined) return
+
+    ElMessage.success(
+      imported.alreadyOnShelf
+        ? `《${imported.book.name}》已在书架，共 ${imported.chapterCount} 章`
+        : `《${imported.book.name}》已加入书架，共 ${imported.chapterCount} 章`,
+    )
+    clearSourceSearch()
+  } catch (error) {
+    ElMessage.error(`加入书架失败：${getErrorMessage(error)}`)
+  } finally {
+    setSourceBookImporting(key, false)
+  }
+}
+
 const handleBookClick = (book: Book | SourceSearchBook) => {
   if (isSourceSearchBook(book)) {
-    const url = new URL(book.bookUrl)
-    if (url.protocol !== 'http:' && url.protocol !== 'https:') {
+    if (!isHttpUrl(book.bookUrl)) {
       ElMessage.warning('书源搜索结果只能打开 http/https 链接')
       return
     }
@@ -690,7 +743,7 @@ const toDetail = (
 ) => {
   if (bookName === '尚无阅读记录') return
   if (fromReadRecentClick && !hasBookOnShelf(shelf.value, bookUrl)) {
-    ElMessage.warning('最近阅读的书籍已不在本地书架，请重新导入 TXT')
+    ElMessage.warning('最近阅读的书籍已不在书架，请重新导入或重新加入书架')
     resetReadingRecent()
     clearReadingSession()
     return
@@ -792,6 +845,11 @@ onUnmounted(
         .recent-book {
           font-size: 12px;
           cursor: pointer;
+
+          &.no-point {
+            pointer-events: none;
+            cursor: default;
+          }
         }
       }
     }
@@ -803,10 +861,6 @@ onUnmounted(
         font-size: 14px;
         color: #6b7280;
         font-family: FZZCYSK;
-      }
-
-      .no-point {
-        pointer-events: none;
       }
 
       .setting-connect {

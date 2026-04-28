@@ -89,7 +89,12 @@ const mimeTypes = new Map([
 ])
 
 const ok = data => ({ isSuccess: true, errorMsg: '', data })
-const fail = message => ({ isSuccess: false, errorMsg: message, data: null })
+const fail = (message, errorCode) => ({
+  isSuccess: false,
+  errorMsg: message,
+  errorCode,
+  data: null,
+})
 const clone = value => JSON.parse(JSON.stringify(value))
 
 const parseArgs = argv => {
@@ -195,8 +200,8 @@ const sendJson = (res, status, data) => {
 }
 
 const sendApiOk = (res, data) => sendJson(res, 200, ok(data))
-const sendApiError = (res, status, message) =>
-  sendJson(res, status, fail(message))
+const sendApiError = (res, status, message, errorCode) =>
+  sendJson(res, status, fail(message, errorCode))
 
 const readBody = (req, limit = MAX_JSON_BYTES) =>
   new Promise((resolve, reject) => {
@@ -514,12 +519,58 @@ const getChapters = async bookUrl => {
   })
 }
 
-const getChapterContent = async (bookUrl, index) => {
+const isPlaceholderChapterContent = content =>
+  /精彩内容正在加载中|内容正在加载|正在加载中|请稍候|请稍后/.test(
+    String(content ?? ''),
+  )
+
+const getChapterRecord = async (bookUrl, index) => {
   const result = await query(
-    `SELECT content FROM ${SCHEMA}.chapters WHERE book_url = $1 AND chapter_index = $2`,
+    `SELECT data, content FROM ${SCHEMA}.chapters WHERE book_url = $1 AND chapter_index = $2`,
     [bookUrl, index],
   )
-  return result.rows[0]?.content
+  const row = result.rows[0]
+  if (row === undefined) return undefined
+  return {
+    ...row.data,
+    content:
+      typeof row.content === 'string' ? row.content : (row.data.content ?? ''),
+  }
+}
+
+const saveChapterContent = async (bookUrl, index, content) => {
+  await query(
+    `
+      UPDATE ${SCHEMA}.chapters
+      SET
+        content = $3,
+        data = jsonb_set(data, '{content}', to_jsonb($3::text), true),
+        updated_at = now()
+      WHERE book_url = $1 AND chapter_index = $2
+    `,
+    [bookUrl, index, content],
+  )
+}
+
+const getChapterContent = async (bookUrl, index) => {
+  const chapter = await getChapterRecord(bookUrl, index)
+  if (chapter === undefined) return undefined
+
+  const storedContent =
+    typeof chapter.content === 'string' ? chapter.content : ''
+
+  const book = await getBook(bookUrl)
+  if (book === undefined || book.origin === 'local') return storedContent
+  if (
+    storedContent.trim().length > 0 &&
+    !isPlaceholderChapterContent(storedContent)
+  ) {
+    return storedContent
+  }
+
+  const content = await parseSourceChapterContent(book, chapter)
+  await saveChapterContent(bookUrl, index, content)
+  return content
 }
 
 const sameBook = (book, progress) =>
@@ -550,7 +601,7 @@ const exportBackup = async () => {
     getBooks(),
   ])
   const chapterResult = await query(
-    `SELECT data FROM ${SCHEMA}.chapters ORDER BY book_url, chapter_index`,
+    `SELECT data, content FROM ${SCHEMA}.chapters ORDER BY book_url, chapter_index`,
   )
   return {
     version: 1,
@@ -559,7 +610,13 @@ const exportBackup = async () => {
     bookSources,
     rssSources,
     books,
-    chapters: chapterResult.rows.map(row => row.data),
+    chapters: chapterResult.rows.map(row => ({
+      ...row.data,
+      content:
+        typeof row.content === 'string'
+          ? row.content
+          : (row.data.content ?? ''),
+    })),
   }
 }
 
@@ -2068,6 +2125,971 @@ const searchBookSources = async keyword => {
   return { books: Array.from(bookMap.values()), reports }
 }
 
+const SOURCE_TOC_PAGE_LIMIT = 10
+const SOURCE_CONTENT_PAGE_LIMIT = 5
+
+const isSourceSearchBookPayload = value =>
+  isRecord(value) &&
+  value.entryType === 'source-search' &&
+  typeof value.name === 'string' &&
+  typeof value.bookUrl === 'string' &&
+  typeof value.sourceUrl === 'string'
+
+const requireSourceSearchBook = value => {
+  if (!isSourceSearchBookPayload(value)) {
+    throw new Error('加入书架请求缺少有效的书源搜索结果')
+  }
+  const bookUrl = resolveHttpUrl(value.bookUrl, value.sourceUrl)
+  if (!bookUrl) throw new Error('书籍详情地址必须是 http/https URL')
+  return { ...value, bookUrl }
+}
+
+const normalizedSourceUrlEquals = (left, right) => {
+  const normalizedLeft = normalizeBookSourceUrl(left)
+  const normalizedRight = normalizeBookSourceUrl(right)
+  return (
+    normalizedLeft.length > 0 &&
+    normalizedRight.length > 0 &&
+    normalizedLeft === normalizedRight
+  )
+}
+
+const normalizeComparableHttpUrl = value => {
+  try {
+    const url = new URL(value)
+    url.hash = ''
+    if (
+      (url.protocol === 'http:' && url.port === '80') ||
+      (url.protocol === 'https:' && url.port === '443')
+    ) {
+      url.port = ''
+    }
+    if (url.pathname.length > 1) {
+      url.pathname = url.pathname.replace(/\/+$/, '')
+    }
+    return url.toString()
+  } catch {
+    return String(value ?? '').trim()
+  }
+}
+
+const sourcePageUrlEquals = (left, right) =>
+  Boolean(left) &&
+  Boolean(right) &&
+  normalizeComparableHttpUrl(left) === normalizeComparableHttpUrl(right)
+
+const findBookSourceInList = (sources, sourceUrl) =>
+  sources.find(
+    source =>
+      source.bookSourceUrl === sourceUrl ||
+      normalizedSourceUrlEquals(source.bookSourceUrl, sourceUrl),
+  )
+
+const findBookSourceByUrl = async sourceUrl => {
+  const sources = await getSources('bookSource')
+  return findBookSourceInList(sources, sourceUrl)
+}
+
+const findBookSourceForSearchBook = async searchBook => {
+  const sources = await getSources('bookSource')
+  const source =
+    findBookSourceInList(sources, searchBook.sourceUrl) ??
+    findBookSourceInList(sources, searchBook.origin)
+  if (source === undefined) {
+    throw new Error(`未找到书源「${searchBook.sourceName}」配置，无法加入书架`)
+  }
+  return source
+}
+
+const findBookSourceForBook = async book => {
+  const source = await findBookSourceByUrl(book.origin)
+  if (source === undefined) {
+    throw new Error(
+      `书源「${book.originName ?? book.origin}」不存在，无法解析正文`,
+    )
+  }
+  return source
+}
+
+const sourceRuntimeNotes = source => {
+  const notes = []
+  if (source.enabledCookieJar) {
+    notes.push('该书源启用了 CookieJar，服务端按匿名请求解析')
+  }
+  if (source.jsLib) notes.push('jsLib 暂不执行')
+  if (source.loginUi || source.loginCheckJs) notes.push('登录脚本暂不执行')
+  if (source.coverDecodeJs) notes.push('封面解密 JS 暂不执行')
+  return notes
+}
+
+const fetchSourcePageText = async (source, rawUrl, label) => {
+  const url = resolveHttpUrl(rawUrl, source.bookSourceUrl)
+  if (!url) throw new Error(`${label}必须是 http/https URL`)
+
+  const { headers, warnings } = parseSourceHeaders(source.header, {
+    allowOriginReferer: true,
+  })
+  applyDefaultSourceSearchHeaders(headers, url, 'GET')
+
+  try {
+    const response = await requestBytes(url, {
+      headers: normalizeProxyHeaders(headers, { allowOriginReferer: true }),
+      timeout: SOURCE_FETCH_TIMEOUT_MS,
+      urlLabel: label,
+    })
+    return {
+      finalUrl: response.finalUrl,
+      text: decodeSourceText(
+        response.content,
+        response.headers,
+        source.charset ?? source.bookSourceCharset ?? source.bookSourceEncoding,
+      ),
+      warnings,
+    }
+  } catch (error) {
+    throw new Error(
+      appendWarnings(
+        `${label}抓取失败：${error instanceof Error ? error.message : String(error)}`,
+        warnings.concat(sourceRuntimeNotes(source)),
+      ),
+    )
+  }
+}
+
+const parseStaticObjectParams = objectText => {
+  const params = new URLSearchParams()
+  for (const match of objectText.matchAll(
+    /['"]?([A-Za-z_$][\w$-]*)['"]?\s*:\s*(['"])(.*?)\2/g,
+  )) {
+    params.set(
+      match[1],
+      match[3]
+        .replace(/\\\//g, '/')
+        .replace(/\\(["'\\])/g, '$1')
+        .replace(/\\n/g, '\n')
+        .replace(/\\r/g, '\r'),
+    )
+  }
+  return params
+}
+
+const findStaticJqueryContentRequest = (text, baseUrl) => {
+  const contentAccessorPattern = String.raw`(?:[A-Za-z_$][\w$]*\s*(?:\[\s*['"]content['"]\s*\]|\.\s*content))`
+  const postMatch = text.match(
+    new RegExp(
+      String.raw`\$\.post\(\s*(['"])(.*?)\1\s*,\s*(\{[\s\S]*?\})\s*,[\s\S]{0,2000}?${contentAccessorPattern}[\s\S]{0,2000}?['"]json['"]\s*\)`,
+      'i',
+    ),
+  )
+  const match =
+    postMatch ??
+    text.match(
+      new RegExp(
+        String.raw`\$\.ajax\(\s*\{[\s\S]*?url\s*:\s*(['"])(.*?)\1[\s\S]*?data\s*:\s*(\{[\s\S]*?\})[\s\S]*?${contentAccessorPattern}`,
+        'i',
+      ),
+    )
+  if (match === null) return undefined
+
+  const url = resolveHttpUrl(match[2], baseUrl)
+  const body = parseStaticObjectParams(match[3])
+  if (!url || Array.from(body.keys()).length === 0) return undefined
+  return { url, body: body.toString() }
+}
+
+const fetchStaticJqueryContent = async (
+  source,
+  page,
+  request = findStaticJqueryContentRequest(page.text, page.finalUrl),
+) => {
+  if (request === undefined) return ''
+
+  const { headers, warnings } = parseSourceHeaders(source.header, {
+    allowOriginReferer: true,
+  })
+  headers.Accept = 'application/json, text/javascript, */*; q=0.01'
+  headers['Content-Type'] = 'application/x-www-form-urlencoded; charset=UTF-8'
+  headers['X-Requested-With'] = 'XMLHttpRequest'
+  headers.Referer = page.finalUrl
+  headers.Origin = new URL(page.finalUrl).origin
+
+  try {
+    const response = await requestBytes(request.url, {
+      method: 'POST',
+      headers: normalizeProxyHeaders(headers, { allowOriginReferer: true }),
+      body: request.body,
+      timeout: SOURCE_FETCH_TIMEOUT_MS,
+      urlLabel: '正文动态接口',
+    })
+    const text = decodeSourceText(
+      response.content,
+      response.headers,
+      source.charset ?? source.bookSourceCharset ?? source.bookSourceEncoding,
+    )
+    const payload = JSON.parse(text)
+    return normalizeRuleText(isRecord(payload) ? payload.content : '')
+  } catch (error) {
+    throw new Error(
+      appendWarnings(
+        `正文动态接口抓取失败：${error instanceof Error ? error.message : String(error)}`,
+        warnings.concat(sourceRuntimeNotes(source)),
+      ),
+    )
+  }
+}
+
+const stripRuleReplacements = rule =>
+  String(rule ?? '')
+    .trim()
+    .split('##')[0]
+    .trim()
+
+const isJsonReadableRule = rule => {
+  const body = stripJsonVariableOperators(stripRuleReplacements(rule))
+  return (
+    isJsonPathCompoundRule(body) ||
+    isJsonAccessorRule(body) ||
+    /\{\{\s*\$/.test(body) ||
+    /\{\s*\$/.test(body)
+  )
+}
+
+const tryParseJsonPage = (text, rules) => {
+  if (!/^[\s\uFEFF]*[\[{]/.test(text)) return undefined
+  if (!rules.some(isJsonReadableRule)) return undefined
+  return parseJsonSearchResponse(text)
+}
+
+const assertSupportedRule = (rule, label) => {
+  if (isComplexLegadoRule(rule)) {
+    throw new Error(`规则「${rule}」超出当前 Web ${label}支持范围`)
+  }
+}
+
+const readOptionalSourceRuleValue = ($, scope, jsonData, rule, baseUrl) => {
+  if (!rule?.trim() || isComplexLegadoRule(rule)) return ''
+  try {
+    return jsonData !== undefined && isJsonReadableRule(rule)
+      ? readJsonRuleValue(jsonData, rule)
+      : readRuleValue($, scope, rule, baseUrl)
+  } catch {
+    return ''
+  }
+}
+
+const getErrorMessage = error =>
+  error instanceof Error ? error.message : String(error)
+
+const sourcePageNotes = (source, page) =>
+  unique([
+    ...(page.warnings ?? []),
+    ...sourceRuntimeNotes(source),
+    `当前地址：${page.finalUrl}`,
+  ])
+
+const wrapSourcePageParseError = (source, page, stage, error) =>
+  new Error(
+    appendWarnings(
+      `${stage}解析失败：${getErrorMessage(error)}`,
+      sourcePageNotes(source, page),
+    ),
+  )
+
+const readOptionalCriticalSourceRuleValue = (
+  $,
+  scope,
+  jsonData,
+  rule,
+  baseUrl,
+  label,
+) => {
+  if (!rule?.trim()) return ''
+  assertSupportedRule(rule, label)
+  try {
+    return jsonData !== undefined && isJsonReadableRule(rule)
+      ? readJsonRuleValue(jsonData, rule)
+      : readRuleValue($, scope, rule, baseUrl)
+  } catch (error) {
+    throw new Error(`规则「${rule}」解析失败：${getErrorMessage(error)}`)
+  }
+}
+
+const readRequiredSourceRuleValue = (
+  $,
+  scope,
+  jsonData,
+  rule,
+  baseUrl,
+  label,
+) => {
+  assertSupportedRule(rule, label)
+  const value =
+    jsonData !== undefined && isJsonReadableRule(rule)
+      ? readJsonRuleValue(jsonData, rule)
+      : readRuleValue($, scope, rule, baseUrl)
+  return value.trim()
+}
+
+const resolveOptionalHttpUrl = (value, baseUrl) =>
+  resolveHttpUrl(String(value ?? ''), baseUrl)
+
+const parseRuleBoolean = value =>
+  /^(true|1|yes|y|是|vip|收费|付费)$/i.test(String(value ?? '').trim())
+
+const parseSourceBookInfo = (source, searchBook, page) => {
+  const rule = source.ruleBookInfo ?? {}
+  const rules = [
+    rule.name,
+    rule.author,
+    rule.kind,
+    rule.wordCount,
+    rule.lastChapter,
+    rule.intro,
+    rule.coverUrl,
+    rule.tocUrl,
+  ]
+  const jsonData = tryParseJsonPage(page.text, rules)
+  const $ = cheerio.load(page.text)
+  const root = $.root()
+  const read = item =>
+    readOptionalSourceRuleValue($, root, jsonData, item, page.finalUrl)
+  const readCritical = (item, label) =>
+    readOptionalCriticalSourceRuleValue(
+      $,
+      root,
+      jsonData,
+      item,
+      page.finalUrl,
+      label,
+    )
+  const tocUrl =
+    resolveOptionalHttpUrl(
+      readCritical(rule.tocUrl, '详情目录地址'),
+      page.finalUrl,
+    ) ||
+    resolveOptionalHttpUrl(searchBook.tocUrl, page.finalUrl) ||
+    searchBook.bookUrl
+
+  return {
+    name: read(rule.name) || searchBook.name,
+    author: read(rule.author) || searchBook.author || '作者未知',
+    kind: read(rule.kind) || searchBook.kind,
+    wordCount: read(rule.wordCount) || searchBook.wordCount,
+    latestChapterTitle: read(rule.lastChapter) || searchBook.latestChapterTitle,
+    intro: read(rule.intro) || searchBook.intro,
+    coverUrl:
+      resolveImageUrl(read(rule.coverUrl), page.finalUrl) ||
+      searchBook.coverUrl,
+    tocUrl,
+  }
+}
+
+const buildSourceChapterRecord = ({
+  bookUrl,
+  title,
+  chapterUrl,
+  tocUrl,
+  index,
+  isVolume,
+  isVip,
+  isPay,
+  tag,
+}) => ({
+  id: chapterId(bookUrl, index),
+  url: chapterUrl,
+  title,
+  isVolume,
+  baseUrl: tocUrl,
+  bookUrl,
+  index,
+  isVip,
+  isPay,
+  tag: tag || undefined,
+  content: '',
+})
+
+const parseHtmlSourceTocPage = (source, bookUrl, page) => {
+  const rule = source.ruleToc ?? {}
+  const $ = cheerio.load(page.text)
+  const nodes = selectBookListNodes($, rule.chapterList)
+  const chapters = nodes
+    .map(node => {
+      const scope = $(node)
+      const title = readRequiredSourceRuleValue(
+        $,
+        scope,
+        undefined,
+        rule.chapterName,
+        page.finalUrl,
+        '目录解析',
+      )
+      const chapterUrl = resolveHttpUrl(
+        readRequiredSourceRuleValue(
+          $,
+          scope,
+          undefined,
+          rule.chapterUrl,
+          page.finalUrl,
+          '目录解析',
+        ),
+        page.finalUrl,
+      )
+      if (!title || !chapterUrl) return undefined
+      return {
+        title,
+        chapterUrl,
+        isVolume: parseRuleBoolean(
+          readOptionalSourceRuleValue(
+            $,
+            scope,
+            undefined,
+            rule.isVolume,
+            page.finalUrl,
+          ),
+        ),
+        isVip: parseRuleBoolean(
+          readOptionalSourceRuleValue(
+            $,
+            scope,
+            undefined,
+            rule.isVip,
+            page.finalUrl,
+          ),
+        ),
+        isPay: rule.isPay
+          ? parseRuleBoolean(
+              readOptionalSourceRuleValue(
+                $,
+                scope,
+                undefined,
+                rule.isPay,
+                page.finalUrl,
+              ),
+            )
+          : true,
+        tag: readOptionalSourceRuleValue(
+          $,
+          scope,
+          undefined,
+          rule.updateTime,
+          page.finalUrl,
+        ),
+      }
+    })
+    .filter(Boolean)
+
+  const nextTocUrl = resolveOptionalHttpUrl(
+    readOptionalCriticalSourceRuleValue(
+      $,
+      $.root(),
+      undefined,
+      rule.nextTocUrl,
+      page.finalUrl,
+      '目录下一页',
+    ),
+    page.finalUrl,
+  )
+  return { chapters, nextTocUrl }
+}
+
+const parseJsonSourceTocPage = (source, bookUrl, page, jsonData) => {
+  const rule = source.ruleToc ?? {}
+  const items = readJsonPathUnionValues(jsonData, rule.chapterList, {
+    flattenTerminalArrays: true,
+  })
+  const chapters = items
+    .map(item => {
+      const title = readRequiredSourceRuleValue(
+        undefined,
+        undefined,
+        item,
+        rule.chapterName,
+        page.finalUrl,
+        '目录解析',
+      )
+      const chapterUrl = resolveHttpUrl(
+        readRequiredSourceRuleValue(
+          undefined,
+          undefined,
+          item,
+          rule.chapterUrl,
+          page.finalUrl,
+          '目录解析',
+        ),
+        page.finalUrl,
+      )
+      if (!title || !chapterUrl) return undefined
+      return {
+        title,
+        chapterUrl,
+        isVolume: parseRuleBoolean(
+          readOptionalSourceRuleValue(
+            undefined,
+            undefined,
+            item,
+            rule.isVolume,
+            page.finalUrl,
+          ),
+        ),
+        isVip: parseRuleBoolean(
+          readOptionalSourceRuleValue(
+            undefined,
+            undefined,
+            item,
+            rule.isVip,
+            page.finalUrl,
+          ),
+        ),
+        isPay: rule.isPay
+          ? parseRuleBoolean(
+              readOptionalSourceRuleValue(
+                undefined,
+                undefined,
+                item,
+                rule.isPay,
+                page.finalUrl,
+              ),
+            )
+          : true,
+        tag: readOptionalSourceRuleValue(
+          undefined,
+          undefined,
+          item,
+          rule.updateTime,
+          page.finalUrl,
+        ),
+      }
+    })
+    .filter(Boolean)
+
+  const nextTocUrl = resolveOptionalHttpUrl(
+    readOptionalCriticalSourceRuleValue(
+      undefined,
+      undefined,
+      jsonData,
+      rule.nextTocUrl,
+      page.finalUrl,
+      '目录下一页',
+    ),
+    page.finalUrl,
+  )
+  return { chapters, nextTocUrl }
+}
+
+const parseSourceTocPage = (source, bookUrl, page) => {
+  const rule = source.ruleToc ?? {}
+  if (!rule.chapterList?.trim()) throw new Error('书源未配置目录列表规则')
+  if (!rule.chapterName?.trim()) throw new Error('书源未配置章节名称规则')
+  if (!rule.chapterUrl?.trim()) throw new Error('书源未配置章节地址规则')
+  assertSupportedRule(rule.chapterList, '目录解析')
+  assertSupportedRule(rule.chapterName, '目录解析')
+  assertSupportedRule(rule.chapterUrl, '目录解析')
+
+  const jsonData = shouldParseSearchResponseAsJson(rule.chapterList, page.text)
+    ? parseJsonSearchResponse(page.text)
+    : undefined
+  return jsonData === undefined
+    ? parseHtmlSourceTocPage(source, bookUrl, page)
+    : parseJsonSourceTocPage(source, bookUrl, page, jsonData)
+}
+
+const parseSourceBookChapters = async (source, bookUrl, tocUrl) => {
+  const chapters = []
+  const seenChapterUrls = new Set()
+  const seenTocUrls = new Set()
+  let nextTocUrl = tocUrl
+  let pageIndex = 0
+
+  while (nextTocUrl) {
+    if (seenTocUrls.has(nextTocUrl)) {
+      throw new Error(`目录下一页出现循环：${nextTocUrl}`)
+    }
+    if (pageIndex >= SOURCE_TOC_PAGE_LIMIT) {
+      throw new Error(
+        `目录分页超过 ${SOURCE_TOC_PAGE_LIMIT} 页，已停止，未写入书架`,
+      )
+    }
+    seenTocUrls.add(nextTocUrl)
+
+    const page = await fetchSourcePageText(source, nextTocUrl, '目录地址')
+    let parsed
+    try {
+      parsed = parseSourceTocPage(source, bookUrl, page)
+    } catch (error) {
+      throw wrapSourcePageParseError(source, page, '目录', error)
+    }
+    parsed.chapters.forEach(chapter => {
+      if (seenChapterUrls.has(chapter.chapterUrl)) return
+      seenChapterUrls.add(chapter.chapterUrl)
+      chapters.push(
+        buildSourceChapterRecord({
+          ...chapter,
+          bookUrl,
+          tocUrl: page.finalUrl,
+          index: chapters.length,
+        }),
+      )
+    })
+    nextTocUrl = parsed.nextTocUrl
+    pageIndex += 1
+  }
+
+  if (chapters.length === 0) throw new Error('目录规则没有解析出章节')
+  return chapters
+}
+
+const buildSourceShelfBook = (source, searchBook, info, chapters) => {
+  const now = Date.now()
+  const firstChapterTitle = chapters[0]?.title ?? '正文'
+  const latestChapterTitle =
+    info.latestChapterTitle ??
+    searchBook.latestChapterTitle ??
+    chapters.at(-1)?.title ??
+    firstChapterTitle
+
+  return {
+    name: info.name || searchBook.name,
+    author: info.author || searchBook.author || '作者未知',
+    bookUrl: searchBook.bookUrl,
+    kind: info.kind || searchBook.kind || undefined,
+    wordCount: info.wordCount || searchBook.wordCount || undefined,
+    tocUrl: info.tocUrl,
+    origin: source.bookSourceUrl,
+    originName: source.bookSourceName,
+    coverUrl: info.coverUrl || searchBook.coverUrl || undefined,
+    intro: info.intro || searchBook.intro || undefined,
+    type: source.bookSourceType ?? searchBook.type ?? 0,
+    group: 0,
+    latestChapterTitle,
+    latestChapterTime: now,
+    lastCheckTime: now,
+    lastCheckCount: 0,
+    totalChapterNum: chapters.length,
+    durChapterTitle: firstChapterTitle,
+    durChapterIndex: 0,
+    durChapterPos: 0,
+    durChapterTime: now,
+    canUpdate: true,
+    order: now,
+    originOrder: source.customOrder ?? searchBook.originOrder ?? 0,
+    syncTime: now,
+  }
+}
+
+const importSourceBook = async payload => {
+  const searchBook = requireSourceSearchBook(payload)
+  const existingBook = await getBook(searchBook.bookUrl)
+  if (existingBook !== undefined) {
+    return {
+      book: existingBook,
+      chapterCount: existingBook.totalChapterNum ?? 0,
+      alreadyOnShelf: true,
+    }
+  }
+
+  const source = await findBookSourceForSearchBook(searchBook)
+  const detailPage = await fetchSourcePageText(
+    source,
+    searchBook.bookUrl,
+    '书籍详情地址',
+  )
+  let info
+  try {
+    info = parseSourceBookInfo(source, searchBook, detailPage)
+  } catch (error) {
+    throw wrapSourcePageParseError(source, detailPage, '详情', error)
+  }
+  const chapters = await parseSourceBookChapters(
+    source,
+    searchBook.bookUrl,
+    info.tocUrl,
+  )
+  const book = buildSourceShelfBook(source, searchBook, info, chapters)
+  await saveBookWithChapters(book, chapters)
+  return { book, chapterCount: chapters.length, alreadyOnShelf: false }
+}
+
+const sanitizeContentHtml = (html, baseUrl) => {
+  const $ = cheerio.load(`<main id="legado-content-root">${html}</main>`)
+  const root = $('#legado-content-root')
+  root
+    .find(
+      'script,style,iframe,object,embed,form,input,button,textarea,select,link,meta',
+    )
+    .remove()
+  root.find('*').each((_, node) => {
+    Object.keys(node.attribs ?? {}).forEach(attribute => {
+      const lowerAttribute = attribute.toLocaleLowerCase()
+      const value = node.attribs[attribute]
+      if (lowerAttribute.startsWith('on')) {
+        $(node).removeAttr(attribute)
+        return
+      }
+      if (lowerAttribute !== 'src' && lowerAttribute !== 'href') return
+      if (/^\s*javascript:/i.test(value)) {
+        $(node).removeAttr(attribute)
+        return
+      }
+      const resolved =
+        lowerAttribute === 'src'
+          ? resolveImageUrl(value, baseUrl)
+          : resolveHttpUrl(value, baseUrl)
+      if (resolved) $(node).attr(attribute, resolved)
+    })
+  })
+  return root.html()?.trim() ?? ''
+}
+
+const normalizeChapterContent = (content, baseUrl) => {
+  const text = normalizeText(String(content ?? ''))
+  if (!/<\/?[a-z][\s\S]*>/i.test(text)) {
+    return text
+      .split('\n')
+      .map(line => line.trim())
+      .filter(Boolean)
+      .join('\n')
+  }
+  return sanitizeContentHtml(text, baseUrl).replace(/\r\n?/g, '\n').trim()
+}
+
+const applyContentReplaceRegex = (content, replaceRegex) => {
+  const trimmed = replaceRegex?.trim()
+  if (!trimmed) return content
+  return trimmed
+    .split(/\r?\n/)
+    .map(item => item.trim())
+    .filter(Boolean)
+    .reduce((text, item) => {
+      const [pattern, replacement = ''] = item.split('##')
+      return pattern.trim()
+        ? replaceRuleText(text, pattern.trim(), replacement)
+        : text
+    }, content)
+}
+
+const BLOCK_CONTENT_SELECTOR = [
+  'address',
+  'article',
+  'aside',
+  'blockquote',
+  'dd',
+  'div',
+  'dl',
+  'dt',
+  'figcaption',
+  'figure',
+  'footer',
+  'h1',
+  'h2',
+  'h3',
+  'h4',
+  'h5',
+  'h6',
+  'header',
+  'hr',
+  'li',
+  'main',
+  'nav',
+  'ol',
+  'p',
+  'pre',
+  'section',
+  'table',
+  'tbody',
+  'td',
+  'tfoot',
+  'th',
+  'thead',
+  'tr',
+  'ul',
+].join(',')
+
+const structuredElementText = ($, target) => {
+  const clone = target.clone()
+  clone
+    .find(
+      'script,style,iframe,object,embed,form,input,button,textarea,select,link,meta',
+    )
+    .remove()
+  clone.find('br').replaceWith('\n')
+  clone.find(BLOCK_CONTENT_SELECTOR).each((_, node) => {
+    $(node).before('\n')
+    $(node).after('\n')
+  })
+  return clone
+    .text()
+    .replace(/\u00a0/g, ' ')
+    .split('\n')
+    .map(line => line.trim())
+    .filter(Boolean)
+    .join('\n')
+}
+
+const readSingleContentRuleValue = ($, scope, rule, baseUrl) => {
+  const parsedRule = parseRule(rule)
+  if (parsedRule === undefined) return ''
+
+  const target =
+    parsedRule.selectors.length === 0
+      ? scope
+      : selectRuleTarget($, scope.get(0), parsedRule.selectors)
+  if (target === undefined || target.length === 0) return ''
+
+  const attribute = parsedRule.attribute.toLocaleLowerCase()
+  if (attribute === 'text') {
+    return applyRuleReplacements(
+      structuredElementText($, target),
+      parsedRule.replacements,
+    )
+  }
+  if (attribute === 'html') {
+    return applyRuleReplacements(
+      target.html()?.trim() ?? '',
+      parsedRule.replacements,
+    )
+  }
+
+  const attrValue = target.attr(parsedRule.attribute)?.trim() ?? ''
+  if (!attrValue) return ''
+  if (attribute === 'href' || attribute === 'src') {
+    return applyRuleReplacements(
+      new URL(attrValue, baseUrl).toString(),
+      parsedRule.replacements,
+    )
+  }
+  return applyRuleReplacements(attrValue, parsedRule.replacements)
+}
+
+const readContentRuleValue = ($, scope, rule, baseUrl) => {
+  const trimmed = rule?.trim()
+  if (!trimmed) return ''
+
+  const [ruleBody, ...replacements] = trimmed.split('##')
+  for (const alternative of splitRuleAlternatives(ruleBody)) {
+    const value = splitRuleConjunctions(alternative)
+      .map(part => readSingleContentRuleValue($, scope, part, baseUrl))
+      .filter(Boolean)
+      .join('\n')
+    const normalizedValue = applyRuleReplacements(
+      value.trim(),
+      replacements.filter(Boolean),
+    )
+    if (normalizedValue) return normalizedValue
+  }
+  return ''
+}
+
+const readRequiredContentRuleValue = ($, scope, jsonData, rule, baseUrl) => {
+  assertSupportedRule(rule, '正文解析')
+  return (
+    jsonData !== undefined && isJsonReadableRule(rule)
+      ? readJsonRuleValue(jsonData, rule)
+      : readContentRuleValue($, scope, rule, baseUrl)
+  ).trim()
+}
+
+const parseSourceContentPage = async (source, page) => {
+  const rule = source.ruleContent ?? {}
+  if (!rule.content?.trim()) throw new Error('书源未配置正文规则')
+
+  const jsonData = tryParseJsonPage(page.text, [rule.content])
+  const $ = cheerio.load(page.text)
+  const rawContent = readRequiredContentRuleValue(
+    $,
+    $.root(),
+    jsonData,
+    rule.content,
+    page.finalUrl,
+  )
+  const replacedContent = applyContentReplaceRegex(
+    rawContent,
+    rule.replaceRegex,
+  )
+  let content = normalizeChapterContent(replacedContent, page.finalUrl)
+  if (!content || isPlaceholderChapterContent(content)) {
+    const dynamicRequest = findStaticJqueryContentRequest(
+      page.text,
+      page.finalUrl,
+    )
+    if (dynamicRequest === undefined && content) {
+      throw new Error(
+        '正文规则只解析出加载占位内容，未识别可静态解析的动态正文接口',
+      )
+    }
+    if (dynamicRequest !== undefined) {
+      const dynamicContent = await fetchStaticJqueryContent(
+        source,
+        page,
+        dynamicRequest,
+      )
+      if (!dynamicContent) {
+        throw new Error('正文动态接口没有返回可用内容')
+      }
+      content = normalizeChapterContent(
+        applyContentReplaceRegex(dynamicContent, rule.replaceRegex),
+        page.finalUrl,
+      )
+    }
+  }
+  if (!content) throw new Error('正文规则没有解析出内容')
+  if (isPlaceholderChapterContent(content)) {
+    throw new Error('正文规则只解析出加载占位内容，当前不执行页面 JS')
+  }
+
+  const nextContentUrl = resolveOptionalHttpUrl(
+    readOptionalCriticalSourceRuleValue(
+      $,
+      $.root(),
+      jsonData,
+      rule.nextContentUrl,
+      page.finalUrl,
+      '正文下一页',
+    ),
+    page.finalUrl,
+  )
+  return { content, nextContentUrl }
+}
+
+const parseSourceChapterContent = async (book, chapter) => {
+  const source = await findBookSourceForBook(book)
+  const nextChapterUrl = (
+    await getChapterRecord(book.bookUrl, chapter.index + 1)
+  )?.url
+  const contents = []
+  const seenUrls = new Set()
+  let nextUrl = chapter.url
+  let pageIndex = 0
+
+  while (nextUrl) {
+    if (seenUrls.has(nextUrl)) {
+      throw new Error(`正文下一页出现循环：${nextUrl}`)
+    }
+    if (pageIndex >= SOURCE_CONTENT_PAGE_LIMIT) {
+      throw new Error(
+        `章节正文分页超过 ${SOURCE_CONTENT_PAGE_LIMIT} 页，未缓存不完整正文`,
+      )
+    }
+    seenUrls.add(nextUrl)
+    const page = await fetchSourcePageText(source, nextUrl, '章节地址')
+    let parsed
+    try {
+      parsed = await parseSourceContentPage(source, page)
+    } catch (error) {
+      throw wrapSourcePageParseError(source, page, '正文', error)
+    }
+    contents.push(parsed.content)
+    nextUrl =
+      parsed.nextContentUrl &&
+      !sourcePageUrlEquals(parsed.nextContentUrl, nextChapterUrl)
+        ? parsed.nextContentUrl
+        : ''
+    pageIndex += 1
+  }
+
+  if (contents.length === 0) throw new Error('正文规则没有解析出内容')
+  return normalizeText(contents.join('\n\n'))
+}
+
 const fetchSubscriptionJson = async rawUrl => {
   const url = await validatePublicUrl(rawUrl, '订阅地址')
   const headers = {
@@ -2135,7 +3157,19 @@ const handleApi = async (req, res, url) => {
   if (!url.pathname.startsWith('/api/')) return false
 
   try {
-    await ensureDatabase()
+    try {
+      await ensureDatabase()
+    } catch (error) {
+      sendApiError(
+        res,
+        500,
+        `PostgreSQL persistence unavailable: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+        'DATABASE_UNAVAILABLE',
+      )
+      return true
+    }
 
     if (url.pathname === '/api/health' && req.method === 'GET') {
       const result = await query('SELECT 1 AS ok')
@@ -2160,6 +3194,11 @@ const handleApi = async (req, res, url) => {
         throw new Error('搜索请求缺少 keyword')
       }
       sendApiOk(res, await searchBookSources(body.keyword))
+      return true
+    }
+
+    if (url.pathname === '/api/books/import-source' && req.method === 'POST') {
+      sendApiOk(res, await importSourceBook(await readJsonBody(req)))
       return true
     }
 

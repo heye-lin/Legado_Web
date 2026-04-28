@@ -96,6 +96,12 @@ export type SourceSearchResult = {
   reports: SourceSearchReport[]
 }
 
+export type SourceBookImportResult = {
+  book: Book
+  chapterCount: number
+  alreadyOnShelf: boolean
+}
+
 export type BookProgress = Pick<
   Book,
   | 'name'

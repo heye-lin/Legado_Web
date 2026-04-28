@@ -1,6 +1,13 @@
 import { defineStore } from 'pinia'
 import API from '@api'
-import type { BaseBook, Book, BookChapter, BookProgress } from '@/book'
+import type {
+  BaseBook,
+  Book,
+  BookChapter,
+  BookProgress,
+  SourceBookImportResult,
+  SourceSearchBook,
+} from '@/book'
 import type { webReadConfig } from '@/web'
 import {
   createDefaultReadConfig,
@@ -9,6 +16,8 @@ import {
 import { ElMessage } from 'element-plus/es'
 
 let webReadConfigLoaded = false
+const normalizeReadingIndex = (value: number) =>
+  Number.isFinite(value) && value >= 0 ? Math.floor(value) : 0
 
 export const useBookStore = defineStore('book', {
   state: () => {
@@ -68,7 +77,10 @@ export const useBookStore = defineStore('book', {
           const y = b.durChapterTime || 0
           return y - x
         })
-      } else if (errorMsg?.includes('还没有添加小说') && this.shelf.length > 0) {
+      } else if (
+        errorMsg?.includes('还没有添加小说') &&
+        this.shelf.length > 0
+      ) {
         ElMessage.info('当前书架上的书籍已经被删除')
         this.shelf = []
       } else {
@@ -79,41 +91,78 @@ export const useBookStore = defineStore('book', {
     /** 从本地数据源加载书架书籍，默认优先返回内存缓存 */
     async loadBookShelf(force = false): Promise<Book[]> {
       if (this.shelf.length > 0 && !force) {
-        void this.refreshBookShelf()
+        void this.refreshBookShelf().catch(error => {
+          ElMessage.error(
+            `刷新书架失败：${
+              error instanceof Error ? error.message : String(error)
+            }`,
+          )
+        })
         return this.shelf
       }
       return this.refreshBookShelf()
+    },
+    /** 将书源搜索结果加入书架，并刷新书架缓存 */
+    async importSourceBook(
+      book: SourceSearchBook,
+    ): Promise<SourceBookImportResult> {
+      const resp = await API.importSourceBook(book)
+      const { isSuccess, data, errorMsg } = resp.data
+      if (!isSuccess) {
+        throw new Error(errorMsg || '书源搜索结果加入书架失败')
+      }
+      await this.refreshBookShelf()
+      return data
     },
     /** 从本地数据源加载书籍目录，优先返回内存缓存 */
     async loadWebCatalog(
       book: typeof this.readingBook,
     ): Promise<BookChapter[]> {
       const { bookUrl, name, chapterIndex } = book
-      const fetchChapterList = API.getChapterList(bookUrl).then(res => {
-        const { isSuccess, data, errorMsg } = res.data
-        if (isSuccess === false) {
-          ElMessage.error(errorMsg)
-          throw new Error(errorMsg)
-        }
-        if (
-          bookUrl === this.readingBook.bookUrl &&
-          data.length !== this.catalog.length &&
-          data.length > 0 &&
-          this.catalog.length > 0
-        ) {
-          ElMessage.info(`书籍${name}: 章节目录已更新`)
-        }
-        this.catalog = data
-        return this.catalog
-      })
+      const targetCatalogIndex = Math.min(
+        normalizeReadingIndex(chapterIndex),
+        Math.max(0, this.catalog.length - 1),
+      )
+      const catalogBelongsToBook =
+        this.catalog.length > 0 &&
+        this.catalog[0]?.bookUrl === bookUrl &&
+        this.catalog[targetCatalogIndex]?.bookUrl === bookUrl
       if (
-        bookUrl === this.readingBook.bookUrl &&
+        this.readingBook.bookUrl === bookUrl &&
+        catalogBelongsToBook &&
         this.catalog.length > 0 &&
         this.catalog.length - 1 >= chapterIndex
       ) {
         return this.catalog
       }
-      return fetchChapterList
+
+      const res = await API.getChapterList(bookUrl)
+      const { isSuccess, data, errorMsg } = res.data
+      if (isSuccess === false) {
+        ElMessage.error(errorMsg)
+        throw new Error(errorMsg)
+      }
+      if (this.readingBook.bookUrl !== bookUrl) {
+        return data
+      }
+
+      const currentCatalogBelongsToBook =
+        this.catalog.length > 0 && this.catalog[0]?.bookUrl === bookUrl
+      if (
+        currentCatalogBelongsToBook &&
+        data.length !== this.catalog.length &&
+        data.length > 0
+      ) {
+        ElMessage.info(`书籍${name}: 章节目录已更新`)
+      }
+      this.catalog = data
+      return data
+    },
+    prepareReadingBook(readingBook: typeof this.readingBook) {
+      if (this.readingBook.bookUrl !== readingBook.bookUrl) {
+        this.catalog = []
+      }
+      this.readingBook = readingBook
     },
     setPopCataVisible(visible: boolean) {
       this.popCataVisible = visible
