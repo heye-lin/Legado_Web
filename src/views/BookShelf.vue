@@ -62,7 +62,6 @@
             </el-tag>
             <el-button
               class="standalone-action-button"
-              type="warning"
               size="small"
               @click="openBookSourceManager"
             >
@@ -70,7 +69,7 @@
             </el-button>
             <el-button
               class="standalone-action-button"
-              type="success"
+              type="primary"
               size="small"
               @click="openSourceSearchDialog"
             >
@@ -78,7 +77,6 @@
             </el-button>
             <el-button
               class="standalone-action-button"
-              type="primary"
               size="small"
               @click="fileInput?.click()"
             >
@@ -159,122 +157,26 @@
           <span>先导入或保存书源，再搜索在线书籍并加入书架。</span>
         </div>
         <div class="shelf-feature-actions">
-          <el-button type="warning" @click="openBookSourceManager">
+          <el-button @click="openBookSourceManager">
             书源管理
           </el-button>
-          <el-button type="success" @click="openSourceSearchDialog">
+          <el-button type="primary" @click="openSourceSearchDialog">
             书源搜索
           </el-button>
         </div>
       </div>
-      <div
+      <source-search-panel
         v-if="sourceSearchActive || isSearchingSources"
-        class="source-search-summary"
-      >
-        <div class="source-search-summary-heading">
-          <div>
-            <strong class="source-search-title">
-              {{
-                isSearchingSources
-                  ? '正在使用书源搜索'
-                  : `书源搜索结果：${sourceSearchBooks.length} 本`
-              }}
-            </strong>
-            <span class="source-search-keyword"
-              >「{{ sourceSearchKeyword }}」</span
-            >
-            <div
-              v-if="sourceSearchReports.length > 0"
-              class="source-search-subtitle"
-            >
-              {{ sourceSearchReportSummaryText }}
-            </div>
-          </div>
-          <div class="source-search-actions">
-            <el-button
-              size="small"
-              type="success"
-              :loading="isSearchingSources"
-              @click="searchBook"
-            >
-              重新搜索
-            </el-button>
-            <el-button size="small" @click="clearSourceSearch">
-              返回本地书架
-            </el-button>
-            <el-button
-              size="small"
-              type="warning"
-              @click="openBookSourceManager"
-            >
-              管理书源
-            </el-button>
-          </div>
-        </div>
-        <div v-if="sourceSearchReports.length > 0" class="source-search-report">
-          <el-tag
-            v-for="item in sourceSearchReportCountItems"
-            :key="item.status"
-            :type="item.type"
-            effect="plain"
-            size="small"
-            round
-          >
-            {{ item.label }} {{ item.count }}
-          </el-tag>
-        </div>
-        <div class="source-search-tip">
-          {{ sourceSearchTipText }}
-        </div>
-        <div
-          v-if="sourceSearchShowReportDetails"
-          class="source-search-report-details"
-        >
-          <div class="source-search-report-details-header">
-            <span>{{ sourceSearchReportDetailsTitle }}</span>
-            <span v-if="sourceSearchSuccessHidden">
-              成功项默认收起，展开可查看全部源。
-            </span>
-          </div>
-          <div
-            v-for="report in sourceSearchReportDetails"
-            :key="`${report.sourceUrl}:${report.status}`"
-            class="source-search-report-detail"
-            :class="`is-${report.status}`"
-            :title="getSourceSearchReportTitle(report)"
-          >
-            <el-tag
-              size="small"
-              effect="dark"
-              :type="sourceSearchReportTagType(report.status)"
-            >
-              {{ sourceSearchReportStatusText(report.status) }}
-            </el-tag>
-            <span class="source-search-report-source">
-              {{ report.sourceName }}
-            </span>
-            <span class="source-search-report-message">
-              {{ formatSourceSearchReportMessage(report.message) }}
-            </span>
-          </div>
-          <el-button
-            v-if="sourceSearchCanToggleReports"
-            class="source-search-report-toggle"
-            text
-            size="small"
-            @click="sourceSearchReportsExpanded = !sourceSearchReportsExpanded"
-          >
-            {{ sourceSearchReportToggleText }}
-          </el-button>
-        </div>
-        <div
-          v-if="sourceSearchTopIssues.length > 0"
-          class="source-search-quick-hint"
-        >
-          <strong>优先处理：</strong>
-          <span>{{ sourceSearchTopIssues.join('；') }}</span>
-        </div>
-      </div>
+        :keyword="sourceSearchKeyword"
+        :is-searching="isSearchingSources"
+        :result-count="sourceSearchBooks.length"
+        :reports="sourceSearchReports"
+        :api-target-name="apiTargetName"
+        v-model:reports-expanded="sourceSearchReportsExpanded"
+        @retry="searchBook"
+        @clear="clearSourceSearch"
+        @manage="openBookSourceManager"
+      />
       <div v-if="showStandaloneEmptyState" class="empty-shelf-state">
         <div class="empty-shelf-title">导入 TXT 开始阅读</div>
         <div class="empty-shelf-description">
@@ -282,14 +184,14 @@
           <p>也可以先进入书源管理导入书源，再搜索在线书籍并加入书架。</p>
         </div>
         <div class="empty-shelf-actions">
-          <el-button type="primary" size="large" @click="fileInput?.click()">
+          <el-button size="large" @click="fileInput?.click()">
             导入 TXT
           </el-button>
-          <el-button type="warning" size="large" @click="openBookSourceManager">
+          <el-button size="large" @click="openBookSourceManager">
             书源管理
           </el-button>
           <el-button
-            type="success"
+            type="primary"
             size="large"
             @click="openSourceSearchDialog"
           >
@@ -345,11 +247,11 @@
       </div>
       <template #footer>
         <el-button @click="sourceSearchDialogVisible = false">取消</el-button>
-        <el-button type="warning" @click="openBookSourceManager">
+        <el-button @click="openBookSourceManager">
           书源管理
         </el-button>
         <el-button
-          type="success"
+          type="primary"
           :loading="isSearchingSources"
           @click="confirmSourceSearchDialog"
         >
@@ -363,13 +265,15 @@
 <script setup lang="ts">
 import '@/assets/bookshelf.css'
 import '@/assets/fonts/shelffont.css'
+import SourceSearchPanel from '@/components/SourceSearchPanel.vue'
 import { useBookStore } from '@/store'
 import githubUrl from '@/assets/imgs/github.png'
 import { useLoading } from '@/hooks/loading'
 import { useStandaloneBookImport } from '@/hooks/useStandaloneBookImport'
+import { useSourceSearch } from '@/hooks/useSourceSearch'
 import { Search as SearchIcon } from '@element-plus/icons-vue'
 import API, { getApiTargetName, subscribeApiAvailability } from '@api'
-import type { Book, SourceSearchBook, SourceSearchReport } from '@/book'
+import type { Book, SourceSearchBook } from '@/book'
 import {
   type ReadingRecentBook,
   clearReadingSession,
@@ -409,18 +313,30 @@ const { loadingWrapper, isLoading } = useLoading(
 // 书架书籍和本地搜索
 const searchWord = ref('')
 const searchPlaceholder = '筛选本地书架'
-const sourceSearchBooks = shallowRef<SourceSearchBook[]>([])
-const sourceSearchReports = ref<SourceSearchReport[]>([])
-const sourceSearchErrorMessage = ref('')
-const sourceSearchActive = ref(false)
-const sourceSearchKeyword = ref('')
-const isSearchingSources = ref(false)
-const sourceSearchDialogVisible = ref(false)
-const sourceSearchInput = ref('')
-const sourceSearchReportsExpanded = ref(false)
 const apiTargetName = ref(getApiTargetName())
-let sourceSearchRunId = 0
-let sourceSearchAbortController: AbortController | undefined
+const {
+  sourceSearchBooks,
+  sourceSearchReports,
+  sourceSearchActive,
+  sourceSearchKeyword,
+  isSearchingSources,
+  sourceSearchDialogVisible,
+  sourceSearchInput,
+  sourceSearchReportsExpanded,
+  sourceSearchEmptyMessage,
+  importingSourceBookKeys,
+  searchBook,
+  openSourceSearchDialog,
+  confirmSourceSearchDialog,
+  clearSourceSearch,
+  handleBookImport,
+  openSourceSearchResult,
+  isSourceSearchBook,
+} = useSourceSearch({
+  searchWord,
+  loadingWrapper,
+  importSourceBook: book => store.importSourceBook(book),
+})
 const apiTargetTagType = computed(() =>
   apiTargetName.value === 'PostgreSQL 持久化'
     ? 'success'
@@ -453,270 +369,8 @@ const showLocalSearchEmptyState = computed(
   () => isLocalSearching.value && books.value.length === 0,
 )
 
-type SourceSearchReportTagType = 'success' | 'info' | 'warning' | 'danger'
-
-const sourceSearchReportMeta: Record<
-  SourceSearchReport['status'],
-  { label: string; type: SourceSearchReportTagType }
-> = {
-  success: { label: '搜索成功', type: 'success' },
-  empty: { label: '请求成功无结果', type: 'info' },
-  failed: { label: '请求/解析失败', type: 'danger' },
-  unsupported: { label: '规则不支持', type: 'warning' },
-  skipped: { label: '已跳过', type: 'info' },
-  truncated: { label: '结果截断', type: 'info' },
-}
-const sourceSearchReportStatusOrder: SourceSearchReport['status'][] = [
-  'success',
-  'empty',
-  'failed',
-  'unsupported',
-  'skipped',
-  'truncated',
-]
-const sourceSearchReportCounts = computed(() =>
-  sourceSearchReports.value.reduce(
-    (counts, report) => {
-      counts[report.status] += 1
-      return counts
-    },
-    {
-      success: 0,
-      empty: 0,
-      failed: 0,
-      unsupported: 0,
-      skipped: 0,
-      truncated: 0,
-    } satisfies Record<SourceSearchReport['status'], number>,
-  ),
-)
-const sourceSearchReportCountItems = computed(() =>
-  sourceSearchReportStatusOrder
-    .map(status => ({
-      status,
-      label: sourceSearchReportMeta[status].label,
-      type: sourceSearchReportMeta[status].type,
-      count: sourceSearchReportCounts.value[status],
-    }))
-    .filter(item => item.count > 0),
-)
-const sourceSearchIssueStatusPriority: Record<
-  SourceSearchReport['status'],
-  number
-> = {
-  failed: 0,
-  unsupported: 1,
-  empty: 2,
-  skipped: 3,
-  truncated: 4,
-  success: 5,
-}
-const sourceSearchIssueReports = computed(() =>
-  sourceSearchReports.value
-    .filter(report => report.status !== 'success' || report.count === 0)
-    .slice()
-    .sort(
-      (left, right) =>
-        sourceSearchIssueStatusPriority[left.status] -
-          sourceSearchIssueStatusPriority[right.status] ||
-        left.sourceName.localeCompare(right.sourceName),
-    ),
-)
-const sourceSearchReportPreviewLimit = 8
-const sourceSearchReportDetails = computed(() =>
-  sourceSearchReportsExpanded.value
-    ? sourceSearchReports.value
-    : sourceSearchIssueReports.value.slice(0, sourceSearchReportPreviewLimit),
-)
-const sourceSearchReportHiddenCount = computed(() =>
-  Math.max(
-    0,
-    sourceSearchReportsExpanded.value
-      ? 0
-      : sourceSearchIssueReports.value.length - sourceSearchReportPreviewLimit,
-  ),
-)
-const sourceSearchCanToggleReports = computed(
-  () =>
-    sourceSearchReportsExpanded.value ||
-    sourceSearchReportDetails.value.length < sourceSearchReports.value.length,
-)
-const sourceSearchShowReportDetails = computed(
-  () =>
-    sourceSearchReportDetails.value.length > 0 ||
-    sourceSearchCanToggleReports.value,
-)
-const sourceSearchSuccessHidden = computed(
-  () =>
-    !sourceSearchReportsExpanded.value &&
-    sourceSearchReports.value.some(
-      report => report.status === 'success' && report.count > 0,
-    ),
-)
-const sourceSearchReportToggleText = computed(() =>
-  sourceSearchReportsExpanded.value
-    ? '收起搜索明细'
-    : `查看全部 ${sourceSearchReports.value.length} 条搜索明细`,
-)
-const sourceSearchReportDetailsTitle = computed(() => {
-  if (sourceSearchReportsExpanded.value) return '全部搜索明细'
-  if (sourceSearchIssueReports.value.length === 0) return '搜索明细'
-  return sourceSearchReportHiddenCount.value > 0
-    ? `问题明细，另有 ${sourceSearchReportHiddenCount.value} 条已收起`
-    : '问题明细'
-})
-const sourceSearchReportSummaryText = computed(() => {
-  const counts = sourceSearchReportCountItems.value
-    .map(item => `${item.label} ${item.count}`)
-    .join(' · ')
-  return counts
-    ? `${counts} · 返回结果 ${sourceSearchBooks.value.length} 本`
-    : `返回结果 ${sourceSearchBooks.value.length} 本`
-})
-const sourceSearchTopIssues = computed(() => {
-  const messages: string[] = []
-  const { failed: failedCount, unsupported: unsupportedCount, empty: emptyCount } =
-    sourceSearchReportCounts.value
-  if (failedCount > 0) messages.push(`${failedCount} 个源请求失败或被目标站拦截`)
-  if (unsupportedCount > 0)
-    messages.push(`${unsupportedCount} 个源依赖 JS、Cookie 或登录规则`)
-  if (emptyCount > 0) messages.push(`${emptyCount} 个源请求成功但规则未命中`)
-  return messages.slice(0, 3)
-})
-const sourceSearchTipText = computed(() =>
-  apiTargetName.value === 'PostgreSQL 持久化'
-    ? '点击卡片打开来源站详情；点击“加入书架”会通过生产服务解析详情/目录并保存到 PostgreSQL，阅读章节时按需解析正文并缓存。复杂 JS、登录、CookieJar 和反爬规则仍不支持。'
-    : `点击卡片打开来源站详情；点击“加入书架”需要生产服务解析详情/目录并保存，当前为${apiTargetName.value}模式，纯静态/浏览器本地降级模式不支持书源结果入库。复杂 JS、登录、CookieJar 和反爬规则仍不支持。`,
-)
-const sourceSearchEmptyMessage = computed(
-  () =>
-    sourceSearchErrorMessage.value ||
-    getSourceSearchEmptyMessage(sourceSearchReports.value),
-)
-
-const sourceSearchReportStatusText = (status: SourceSearchReport['status']) =>
-  sourceSearchReportMeta[status].label
-
-const sourceSearchReportTagType = (status: SourceSearchReport['status']) =>
-  sourceSearchReportMeta[status].type
-
-const formatSourceSearchReportMessage = (message: string) => {
-  const normalized = message.replace(/\s+/g, ' ').trim()
-  if (sourceSearchReportsExpanded.value) return normalized
-  return normalized.length > 220
-    ? `${normalized.slice(0, 220).trimEnd()}…`
-    : normalized
-}
-
-const getSourceSearchReportTitle = (report: SourceSearchReport) =>
-  `${sourceSearchReportStatusText(report.status)} · ${report.sourceName}：${report.message.replace(/\s+/g, ' ').trim()}`
-
-const getSourceSearchEmptyMessage = (reports: SourceSearchReport[]) => {
-  if (reports.length === 0) return '当前没有可用书源，请先到书源管理导入书源。'
-  const exampleReport = reports.find(report =>
-    report.message.includes('示例书源'),
-  )
-  if (exampleReport !== undefined) return exampleReport.message
-  if (reports.every(report => report.status === 'empty')) {
-    return '书源请求成功，但没有解析出可显示结果。请检查关键词或搜索规则。'
-  }
-  if (reports.every(report => report.status === 'skipped')) {
-    return '没有可搜索书源，请启用书源并配置搜索地址、搜索列表、书名和详情地址规则。'
-  }
-  if (reports.every(report => report.status === 'unsupported')) {
-    return '导入的书源超出当前 Web 服务端搜索规则支持范围。'
-  }
-  if (reports.every(report => report.status === 'failed')) {
-    return '所有书源搜索失败，常见原因是目标站网络失败、代理无法访问、反爬拦截或规则不兼容。'
-  }
-  return '书源没有返回可显示的搜索结果，请检查书源规则、网络/代理可达性或更换书源。'
-}
-
-const resetSourceSearchState = () => {
-  sourceSearchActive.value = false
-  sourceSearchBooks.value = []
-  sourceSearchReports.value = []
-  sourceSearchErrorMessage.value = ''
-  sourceSearchKeyword.value = ''
-  sourceSearchReportsExpanded.value = false
-}
-
-const cancelSourceSearchRequest = () => {
-  sourceSearchRunId += 1
-  sourceSearchAbortController?.abort()
-  sourceSearchAbortController = undefined
-  isSearchingSources.value = false
-}
-
-const searchBook = async () => {
-  const keyword = searchWord.value.trim()
-  if (keyword === '') {
-    openSourceSearchDialog()
-    return
-  }
-
-  sourceSearchAbortController?.abort()
-  const currentRunId = ++sourceSearchRunId
-  const controller = new AbortController()
-  sourceSearchAbortController = controller
-  resetSourceSearchState()
-  sourceSearchKeyword.value = keyword
-  sourceSearchActive.value = true
-  isSearchingSources.value = true
-  try {
-    const result = await API.searchBookSources(keyword, {
-      signal: controller.signal,
-    })
-    if (currentRunId !== sourceSearchRunId || controller.signal.aborted) return
-    if (!result.data.isSuccess) {
-      sourceSearchErrorMessage.value = result.data.errorMsg
-      ElMessage.error(result.data.errorMsg)
-      return
-    }
-    sourceSearchBooks.value = result.data.data.books
-    sourceSearchReports.value = result.data.data.reports
-    sourceSearchKeyword.value = keyword
-    sourceSearchActive.value = true
-    if (sourceSearchBooks.value.length === 0) {
-      ElMessage.warning(getSourceSearchEmptyMessage(sourceSearchReports.value))
-    }
-  } catch (error) {
-    if (currentRunId !== sourceSearchRunId || controller.signal.aborted) return
-    sourceSearchErrorMessage.value = `书源搜索失败：${getErrorMessage(error)}`
-    ElMessage.error(sourceSearchErrorMessage.value)
-  } finally {
-    if (currentRunId === sourceSearchRunId) {
-      isSearchingSources.value = false
-      if (sourceSearchAbortController === controller) {
-        sourceSearchAbortController = undefined
-      }
-    }
-  }
-}
-
 const openBookSourceManager = () => {
   router.push({ path: '/bookSource' })
-}
-
-const openSourceSearchDialog = () => {
-  sourceSearchInput.value = searchWord.value.trim()
-  sourceSearchDialogVisible.value = true
-}
-
-const confirmSourceSearchDialog = () => {
-  const keyword = sourceSearchInput.value.trim()
-  if (keyword === '') {
-    ElMessage.info('请输入要搜索的书名、作者或关键词')
-    return
-  }
-  sourceSearchDialogVisible.value = false
-  searchWord.value = keyword
-  void nextTick(searchBook)
-}
-
-const clearSourceSearch = () => {
-  cancelSourceSearchRequest()
-  resetSourceSearchState()
 }
 
 const {
@@ -769,79 +423,14 @@ const handleBookDelete = async (book: Book) => {
   }
 }
 
-const isSourceSearchBook = (
-  book: Book | SourceSearchBook,
-): book is SourceSearchBook =>
-  'entryType' in book && book.entryType === 'source-search'
-
-const isHttpUrl = (value: string) => {
-  try {
-    const url = new URL(value)
-    return url.protocol === 'http:' || url.protocol === 'https:'
-  } catch {
-    return false
-  }
-}
-
-const importingSourceBookKeys = ref(new Set<string>())
-const setSourceBookImporting = (key: string, importing: boolean) => {
-  const next = new Set(importingSourceBookKeys.value)
-  if (importing) next.add(key)
-  else next.delete(key)
-  importingSourceBookKeys.value = next
-}
-
-const handleBookImport = async (book: SourceSearchBook) => {
-  const key = book.resultKey
-  if (importingSourceBookKeys.value.has(key)) return
-  setSourceBookImporting(key, true)
-  try {
-    let imported: Awaited<ReturnType<typeof store.importSourceBook>> | undefined
-    await loadingWrapper(
-      store.importSourceBook(book).then(result => {
-        imported = result
-      }),
-    )
-    if (imported === undefined) return
-
-    ElMessage.success(
-      imported.alreadyOnShelf
-        ? `《${imported.book.name}》已在书架，共 ${imported.chapterCount} 章`
-        : `《${imported.book.name}》已加入书架，共 ${imported.chapterCount} 章`,
-    )
-    clearSourceSearch()
-    searchWord.value = ''
-  } catch (error) {
-    ElMessage.error(`加入书架失败：${getErrorMessage(error)}`)
-  } finally {
-    setSourceBookImporting(key, false)
-  }
-}
-
 const handleBookClick = (book: Book | SourceSearchBook) => {
   if (isSourceSearchBook(book)) {
-    if (!isHttpUrl(book.bookUrl)) {
-      ElMessage.warning('书源搜索结果只能打开 http/https 链接')
-      return
-    }
-    const opened = window.open(book.bookUrl, '_blank', 'noopener,noreferrer')
-    if (opened === null) ElMessage.warning('浏览器阻止了外部详情页弹窗')
+    openSourceSearchResult(book)
     return
   }
   const { chapterIndex, chapterPos } = getBookReadPosition(book)
   toDetail(book.bookUrl, book.name, book.author, chapterIndex, chapterPos)
 }
-
-watch(searchWord, value => {
-  if (value.trim() === '') {
-    clearSourceSearch()
-    return
-  }
-  if (sourceSearchActive.value || isSearchingSources.value) {
-    cancelSourceSearchRequest()
-    resetSourceSearchState()
-  }
-})
 
 const toDetail = (
   bookUrl: string,
@@ -1061,24 +650,20 @@ onUnmounted(
       background-color 0.2s ease,
       outline-color 0.2s ease;
 
-    .shelf-feature-bar,
-    .source-search-summary {
+    .shelf-feature-bar {
       display: flex;
+      align-items: center;
+      justify-content: space-between;
       box-sizing: border-box;
+      gap: 16px;
+      margin-bottom: 18px;
+      padding: 16px 18px;
       border: 1px solid var(--shelf-panel-border);
       border-radius: var(--shelf-radius);
       color: var(--shelf-text);
       background: var(--shelf-panel-bg);
       box-shadow: 0 12px 30px rgba(15, 23, 42, 0.06);
       backdrop-filter: blur(10px);
-    }
-
-    .shelf-feature-bar {
-      align-items: center;
-      justify-content: space-between;
-      gap: 16px;
-      margin-bottom: 18px;
-      padding: 16px 18px;
     }
 
     .shelf-feature-text {
@@ -1105,118 +690,6 @@ onUnmounted(
 
     .empty-shelf-actions {
       justify-content: center;
-    }
-
-    .source-search-summary {
-      flex-direction: column;
-      margin-bottom: 18px;
-      padding: 16px 18px;
-    }
-
-    .source-search-summary-heading {
-      display: flex;
-      align-items: flex-start;
-      justify-content: space-between;
-      gap: 16px;
-    }
-
-    .source-search-title {
-      font-size: 16px;
-    }
-
-    .source-search-subtitle {
-      margin-top: 6px;
-      color: var(--shelf-soft-muted);
-      font-size: 13px;
-      line-height: 1.5;
-    }
-
-    .source-search-keyword {
-      margin-left: 6px;
-      color: var(--shelf-muted);
-    }
-
-    .source-search-actions {
-      display: flex;
-      flex-wrap: wrap;
-      justify-content: flex-end;
-      gap: 8px;
-
-      :deep(.el-button + .el-button) {
-        margin-left: 0;
-      }
-    }
-
-    .source-search-report,
-    .source-search-report-details,
-    .source-search-tip,
-    .source-search-quick-hint {
-      margin-top: 10px;
-      color: var(--shelf-muted);
-      font-size: 14px;
-      line-height: 1.6;
-    }
-
-    .source-search-report {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 8px;
-    }
-
-    .source-search-report-details {
-      max-height: 220px;
-      overflow: auto;
-      padding: 10px 12px;
-      border: 1px solid rgba(148, 163, 184, 0.18);
-      border-radius: 12px;
-      background: rgba(248, 250, 252, 0.72);
-    }
-
-    .source-search-report-details-header {
-      display: flex;
-      justify-content: space-between;
-      gap: 12px;
-      margin-bottom: 6px;
-      color: var(--shelf-soft-muted);
-      font-size: 12px;
-    }
-
-    .source-search-report-detail {
-      display: flex;
-      align-items: flex-start;
-      gap: 8px;
-      padding: 6px 0;
-      overflow-wrap: anywhere;
-
-      & + .source-search-report-detail {
-        border-top: 1px dashed rgba(148, 163, 184, 0.2);
-      }
-    }
-
-    .source-search-report-source {
-      flex: 0 0 auto;
-      max-width: 160px;
-      color: var(--shelf-text);
-      font-weight: 600;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-    }
-
-    .source-search-report-message {
-      min-width: 0;
-      white-space: normal;
-    }
-
-    .source-search-quick-hint {
-      padding: 10px 12px;
-      border-radius: 12px;
-      background: rgba(230, 162, 60, 0.1);
-    }
-
-    .source-search-report-toggle {
-      margin-top: 4px;
-      padding-left: 0;
     }
 
     .source-search-empty {
@@ -1381,30 +854,8 @@ onUnmounted(
         display: none;
       }
 
-      .source-search-summary,
       .source-search-empty {
         margin: 16px;
-      }
-
-      .source-search-summary-heading,
-      .source-search-report-details-header {
-        flex-direction: column;
-        align-items: stretch;
-      }
-
-      .source-search-actions {
-        justify-content: flex-start;
-      }
-
-      .source-search-keyword {
-        display: inline-block;
-        max-width: 100%;
-        margin-left: 0;
-        overflow-wrap: anywhere;
-      }
-
-      .source-search-report-source {
-        max-width: 42vw;
       }
 
       .drag-import-mask {
@@ -1456,19 +907,6 @@ onUnmounted(
 
     &.drag-over {
       background-color: rgba(64, 158, 255, 0.12);
-    }
-
-    .source-search-report-details {
-      border-color: rgba(148, 163, 184, 0.16);
-      background: rgba(17, 24, 39, 0.42);
-    }
-
-    .source-search-quick-hint {
-      background: rgba(230, 162, 60, 0.14);
-    }
-
-    .source-search-report-detail + .source-search-report-detail {
-      border-top-color: rgba(148, 163, 184, 0.14);
     }
 
     .drag-import-mask {

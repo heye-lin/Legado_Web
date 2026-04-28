@@ -325,19 +325,21 @@ const proxyImage = (evt: Event, book: BookItem) => {
 
 @media screen and (max-width: 750px) {
   .books-wrapper {
+    box-sizing: border-box;
+    padding: 16px;
+
     .wrapper {
       display: flex;
       flex-direction: column;
-      gap: 0;
+      gap: 12px;
 
       .book {
         box-sizing: border-box;
         width: 100%;
-        border-radius: 0;
-        border-right: 0;
-        border-left: 0;
-        padding: 14px 20px;
-        box-shadow: none;
+        padding: 14px;
+        border: 1px solid var(--shelf-panel-border, #ebeef5);
+        border-radius: 16px;
+        box-shadow: 0 8px 20px rgba(15, 23, 42, 0.05);
 
         .info {
           margin-left: 16px;

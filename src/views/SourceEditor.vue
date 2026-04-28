@@ -55,6 +55,10 @@ watch(
 </script>
 <style lang="scss" scoped>
 .editor {
+  --editor-panel-bg: rgba(255, 255, 255, 0.82);
+  --editor-panel-border: var(--el-border-color-lighter);
+  --editor-radius: 16px;
+
   display: flex;
   height: 100dvh;
   box-sizing: border-box;
@@ -66,25 +70,35 @@ watch(
     var(--el-bg-color-page);
 
   .left {
-    flex: 1;
+    flex: 1 1 0;
     min-width: 0;
   }
 
   .right {
-    flex: 1;
-    width: 360px;
+    flex: 0 1 380px;
+    width: 380px;
     min-width: 320px;
+    max-width: 460px;
   }
 
   .left,
   .right {
+    display: flex;
+    flex-direction: column;
     box-sizing: border-box;
+    min-height: 0;
     padding: 12px 14px;
-    border: 1px solid var(--el-border-color-lighter);
-    border-radius: 16px;
-    background: var(--el-bg-color);
+    border: 1px solid var(--editor-panel-border);
+    border-radius: var(--editor-radius);
+    background: var(--editor-panel-bg);
     box-shadow: 0 12px 30px rgba(15, 23, 42, 0.06);
+    backdrop-filter: blur(10px);
   }
+}
+
+:global(html.dark) .editor {
+  --editor-panel-bg: rgba(31, 35, 39, 0.82);
+  --editor-panel-border: #343a42;
 }
 
 @media screen and (max-width: 750px) {
@@ -107,6 +121,7 @@ watch(
     .right {
       flex: none;
       width: auto;
+      max-width: none;
       min-height: auto;
       min-width: 0;
       padding: 10px;
