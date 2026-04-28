@@ -194,8 +194,8 @@
           </div>
         </div>
         <div class="source-search-tip">
-          点击结果会在新标签页打开来源站详情；当前不能加入书架或在线阅读。生产服务会通过同源代理抓取搜索页；规则仍需是当前
-          Web 端可识别的简单 CSS/文本清理规则。
+          点击结果会在新标签页打开来源站详情；当前不能加入书架或在线阅读。当前生产服务会通过同源服务端接口搜索书源，不再依赖浏览器
+          CORS；复杂 JS、登录、CookieJar 和反爬规则仍可能不支持。
         </div>
       </div>
       <div v-if="showStandaloneEmptyState" class="empty-shelf-state">

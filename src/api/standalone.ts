@@ -1134,7 +1134,7 @@ const searchSingleBookSource = async (
       report: sourceSearchReport(
         source,
         'unsupported',
-        `该书源依赖 ${unsupportedFeatures.join('、')}，纯浏览器搜索暂不支持`,
+        `该书源依赖 ${unsupportedFeatures.join('、')}，浏览器降级搜索暂不支持；请使用生产服务的服务端书源搜索`,
       ),
     }
   }

@@ -22,6 +22,12 @@ const SERVER_SOURCE_SYNC_KEY = 'legado.pg.serverSourceSynced'
 
 let serverAvailable: boolean | undefined
 
+const getErrorMessage = (error: unknown) =>
+  error instanceof Error ? error.message : String(error)
+
+const isAbortError = (error: unknown) =>
+  error instanceof DOMException && error.name === 'AbortError'
+
 const apiPath = (path: string, params?: Record<string, string | number>) => {
   const url = new URL(path, window.location.origin)
   Object.entries(params ?? {}).forEach(([key, value]) =>
@@ -204,24 +210,43 @@ const getBookContent = async (
 const searchBookSources = async (
   searchKey: string,
   options: { signal?: AbortSignal } = {},
-): ApiResult<SourceSearchResult> =>
-  withApiFallback(
-    async () => {
-      await getSources('bookSource')
-      return {
-        data: {
-          isSuccess: true,
-          errorMsg: '',
-          data: await request<SourceSearchResult>('/api/book-source-search', {
-            method: 'POST',
-            body: JSON.stringify({ keyword: searchKey }),
-            signal: options.signal,
-          }),
-        },
-      }
-    },
-    () => standaloneApi.searchBookSources(searchKey, options),
-  )
+): ApiResult<SourceSearchResult> => {
+  const keyword = searchKey.trim()
+  if (keyword === '') {
+    return {
+      data: {
+        isSuccess: true,
+        errorMsg: '',
+        data: { books: [], reports: [] },
+      },
+    }
+  }
+
+  try {
+    await getSources('bookSource')
+    return {
+      data: {
+        isSuccess: true,
+        errorMsg: '',
+        data: await request<SourceSearchResult>('/api/book-source-search', {
+          method: 'POST',
+          body: JSON.stringify({ keyword }),
+          signal: options.signal,
+        }),
+      },
+    }
+  } catch (error) {
+    if (options.signal?.aborted || isAbortError(error)) throw error
+    serverAvailable = false
+    return {
+      data: {
+        isSuccess: false,
+        errorMsg: `服务端书源搜索接口不可用：${getErrorMessage(error)}。请确认当前页面通过生产服务启动且 /api/health 正常。`,
+        data: { books: [], reports: [] },
+      },
+    }
+  }
+}
 
 const deleteBook = async (book: BaseBook): ApiResult<string> =>
   withApiFallback(

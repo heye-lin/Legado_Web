@@ -1684,7 +1684,7 @@ const serveStatic = async (req, res, url) => {
       ETag: tag,
       'Cache-Control': filePath.endsWith('index.html')
         ? 'no-store'
-        : 'public, max-age=31536000, immutable',
+        : 'no-cache',
     })
   } catch {
     send(res, 404, 'Not Found', { 'Content-Type': 'text/plain; charset=utf-8' })
