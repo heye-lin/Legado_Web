@@ -1,21 +1,36 @@
 <template>
-  <div class="menu flex-column-center">
-    <el-button size="large" @click="openShelf">返回书架</el-button>
+  <div class="menu" aria-label="源管理操作">
+    <el-button @click="openShelf">返回书架</el-button>
     <el-button
-      v-for="button in buttons"
-      size="large"
-      :key="button.name"
+      v-for="button in primaryButtons"
+      :key="button.key"
+      :type="button.type"
       @click="button.action"
     >
-      {{ button.name }}
+      {{ getButtonName(button) }}
     </el-button>
-    <el-button size="large" @click="() => (hotkeysDialogVisible = true)"
-      >快捷键</el-button
-    >
+    <el-dropdown trigger="click" @command="runToolbarCommand">
+      <el-button>
+        更多操作
+        <el-icon class="el-icon--right"><ArrowDown /></el-icon>
+      </el-button>
+      <template #dropdown>
+        <el-dropdown-menu>
+          <el-dropdown-item
+            v-for="button in moreButtons"
+            :key="button.key"
+            :command="button.key"
+          >
+            {{ getButtonName(button) }}
+          </el-dropdown-item>
+        </el-dropdown-menu>
+      </template>
+    </el-dropdown>
+    <el-button @click="() => (hotkeysDialogVisible = true)">快捷键</el-button>
   </div>
   <el-dialog
     v-model="subscriptionDialogVisible"
-    title="URL 订阅导入"
+    title="URL 订阅（合并）"
     width="min(460px, calc(100vw - 32px))"
   >
     <div class="subscription-dialog">
@@ -34,7 +49,7 @@
         :loading="isImportingSubscription"
         @click="importSubscription"
       >
-        订阅导入
+        合并导入
       </el-button>
     </template>
   </el-dialog>
@@ -63,11 +78,11 @@
     <div class="hotkeys-settings flex-column-center">
       <div
         v-for="(button, buttonIndex) in buttons"
-        :key="button.name"
+        :key="button.key"
         class="hotkeys-item flex-space-between"
       >
         <span class="title"
-          ><el-text>{{ button.name }}</el-text></span
+          ><el-text>{{ getButtonName(button) }}</el-text></span
         >
         <div class="hotkeys-item__content">
           <div v-for="(key, hotKeysIndex) in button.hotKeys" :key="key">
@@ -92,7 +107,7 @@
 
 <script setup lang="ts">
 import API, { getApiTargetName } from '@api'
-import { CircleCheckFilled, Edit } from '@element-plus/icons-vue'
+import { ArrowDown, CircleCheckFilled, Edit } from '@element-plus/icons-vue'
 import hotkeys from 'hotkeys-js'
 import { getErrorMessage, selectJsonFile } from '@utils/jsonFile'
 import { getSourceName, isValidSource, normalizeSource } from '../utils/source'
@@ -103,12 +118,25 @@ import {
   readSourceConfigFile,
   readSourceSubscriptionUrl,
 } from '@/utils/sourceFile'
-import { getCurrentSourceKind, sourceKindDisplayName } from '@/utils/sourceKind'
+import {
+  getCurrentSourceKind,
+  sourceKindDisplayName,
+  type SourceKind,
+} from '@/utils/sourceKind'
 
 const store = useSourceStore()
 const router = useRouter()
-const sourceDisplayName = () => sourceKindDisplayName(getCurrentSourceKind())
-type ToolButton = { name: string; hotKeys: string[]; action: () => void }
+const sourceDisplayName = computed(() =>
+  sourceKindDisplayName(store.currentSourceKind),
+)
+type ToolButton = {
+  key: string
+  name: string | (() => string)
+  hotKeys: string[]
+  action: () => void
+  type?: 'primary' | 'success' | 'warning' | 'danger' | 'info'
+  placement: 'primary' | 'more'
+}
 const subscriptionDialogVisible = ref(false)
 const subscriptionUrl = ref('')
 const isImportingSubscription = ref(false)
@@ -151,7 +179,7 @@ const push = () => {
   store.changeTabName('editList')
   if (sources.length === 0) {
     return ElMessage({
-      message: `当前没有可保存的${sourceDisplayName()}，请先导入或编辑源`,
+      message: `当前没有可保存的${sourceDisplayName.value}，请先导入或编辑源`,
       type: 'info',
     })
   }
@@ -247,7 +275,7 @@ const exportSources = () => {
   const sources = store.sources
   if (sources.length === 0) {
     ElMessage({
-      message: `当前没有可导出的${sourceDisplayName()}`,
+      message: `当前没有可导出的${sourceDisplayName.value}`,
       type: 'info',
     })
     return
@@ -255,19 +283,38 @@ const exportSources = () => {
 
   downloadSourceConfig(sources, getCurrentSourceKind())
   ElMessage({
-    message: `已导出 ${sources.length} 条${sourceDisplayName()}`,
+    message: `已导出 ${sources.length} 条${sourceDisplayName.value}`,
     type: 'success',
   })
+}
+
+const confirmReplaceSources = async (count: number, kind: SourceKind) => {
+  if (count === 0) return true
+  try {
+    await ElMessageBox.confirm(
+      `导入 JSON 会替换当前全部 ${count} 条${sourceKindDisplayName(kind)}，建议先导出备份。确定继续？`,
+      '导入 JSON（替换）',
+      {
+        confirmButtonText: '替换导入',
+        cancelButtonText: '取消',
+        type: 'warning',
+      },
+    )
+    return true
+  } catch {
+    return false
+  }
 }
 
 const importSourcesFromFile = async (file: File) => {
   const kind = getCurrentSourceKind()
   const sources = await readSourceConfigFile(file, kind)
+  if (!(await confirmReplaceSources(store.sources.length, kind))) return
   await persistSourceConfig(sources, kind)
   store.saveSources(sources, kind)
   if (store.currentSourceKind === kind) store.changeTabName('editList')
   ElMessage({
-    message: `已导入 ${sources.length} 条${sourceKindDisplayName(kind)}`,
+    message: `已替换导入 ${sources.length} 条${sourceKindDisplayName(kind)}`,
     type: 'success',
   })
 }
@@ -350,7 +397,7 @@ const importSubscription = async () => {
     } else {
       store.changeTabName('editList')
     }
-    const message = `URL 订阅导入完成：${messages.join('；')}`
+    const message = `URL 订阅（合并）完成：${messages.join('；')}`
     if (subscription.bookSources.length === 0) {
       ElMessage.warning(
         `${message}；本次没有导入可搜索书源，书籍搜索仍需要 bookSourceUrl/bookSourceName 书源。`,
@@ -368,18 +415,92 @@ const importSubscription = async () => {
 
 const buttons = ref<ToolButton[]>(
   Array.of(
-    { name: '保存全部源', hotKeys: [], action: push },
-    { name: '重新加载源', hotKeys: [], action: pull },
-    { name: '生成 JSON', hotKeys: [], action: convertToTab },
-    { name: '从 JSON 编辑', hotKeys: [], action: convertToSource },
-    { name: '✗清空表单', hotKeys: [], action: clearEdit },
-    { name: '调试源', hotKeys: [], action: debug },
-    { name: '保存当前源', hotKeys: [], action: saveSource },
-    { name: '导出全部', hotKeys: [], action: exportSources },
-    { name: '导入 JSON', hotKeys: [], action: importSources },
-    { name: 'URL 订阅', hotKeys: [], action: openSubscriptionDialog },
+    {
+      key: 'save-all',
+      name: () => `保存全部${sourceDisplayName.value}`,
+      hotKeys: [],
+      action: push,
+      type: 'primary',
+      placement: 'primary',
+    },
+    {
+      key: 'reload',
+      name: () => `重新加载${sourceDisplayName.value}`,
+      hotKeys: [],
+      action: pull,
+      placement: 'more',
+    },
+    {
+      key: 'to-json',
+      name: '生成 JSON',
+      hotKeys: [],
+      action: convertToTab,
+      placement: 'more',
+    },
+    {
+      key: 'from-json',
+      name: '从 JSON 编辑',
+      hotKeys: [],
+      action: convertToSource,
+      placement: 'more',
+    },
+    {
+      key: 'clear',
+      name: '清空表单',
+      hotKeys: [],
+      action: clearEdit,
+      placement: 'more',
+    },
+    {
+      key: 'debug',
+      name: () => `调试${sourceDisplayName.value}`,
+      hotKeys: [],
+      action: debug,
+      placement: 'primary',
+    },
+    {
+      key: 'save-current',
+      name: () => `保存当前${sourceDisplayName.value}`,
+      hotKeys: [],
+      action: saveSource,
+      type: 'success',
+      placement: 'primary',
+    },
+    {
+      key: 'export',
+      name: () => `导出全部${sourceDisplayName.value}`,
+      hotKeys: [],
+      action: exportSources,
+      placement: 'more',
+    },
+    {
+      key: 'import',
+      name: '导入 JSON（替换）',
+      hotKeys: [],
+      action: importSources,
+      placement: 'more',
+    },
+    {
+      key: 'subscribe',
+      name: 'URL 订阅（合并）',
+      hotKeys: [],
+      action: openSubscriptionDialog,
+      placement: 'primary',
+    },
   ),
 )
+const getButtonName = (button: ToolButton) =>
+  typeof button.name === 'function' ? button.name() : button.name
+const primaryButtons = computed(() =>
+  buttons.value.filter(button => button.placement === 'primary'),
+)
+const moreButtons = computed(() =>
+  buttons.value.filter(button => button.placement === 'more'),
+)
+const runToolbarCommand = (command: string | number | object) => {
+  if (typeof command !== 'string') return
+  buttons.value.find(button => button.key === command)?.action()
+}
 const hotkeysDialogVisible = ref(false)
 
 const recordKeyDowning = ref(false)
@@ -519,13 +640,39 @@ onUnmounted(() => {
 }
 
 .menu {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
   flex: 0 0 auto;
+
+  :deep(.el-button + .el-button) {
+    margin-left: 0;
+  }
+}
+
+.menu > .el-button,
+.menu :deep(.el-dropdown) {
+  margin: 0;
+  min-width: 0;
+  max-width: 100%;
 }
 
 .menu > .el-button {
-  margin: 4px;
-  padding: 1em;
-  width: 7em;
+  justify-content: center;
+}
+
+.menu :deep(.el-dropdown .el-button) {
+  width: 100%;
+  margin: 0;
+}
+
+.menu :deep(.el-button > span),
+.menu :deep(.el-dropdown .el-button > span) {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .subscription-dialog {
@@ -556,19 +703,15 @@ onUnmounted(() => {
   }
 }
 
-@media screen and (max-width: 750px) {
+@media screen and (max-width: 960px) {
   .menu {
     flex-direction: row;
     justify-content: flex-start;
-    overflow-x: auto;
-    padding: 8px 12px;
   }
 
-  .menu > .el-button {
-    flex: 0 0 auto;
+  .menu > .el-button,
+  .menu :deep(.el-dropdown) {
     width: auto;
-    margin: 0 8px 0 0;
-    padding: 0.75em 1em;
   }
 }
 </style>

@@ -3,10 +3,13 @@
     size="large"
     border
     :value="sourceUrl"
-    :class="{
-      error: isSaveError,
-      edit: sourceUrl === currentSourceUrl,
-    }"
+    :class="[
+      'source-item',
+      {
+        error: isSaveError,
+        edit: sourceUrl === currentSourceUrl,
+      },
+    ]"
   >
     <div class="source-item-main">
       <div class="source-item-title-row">
@@ -48,9 +51,12 @@
       </div>
     </div>
     <el-button
+      class="source-item-edit"
+      type="primary"
       text
       :icon="Edit"
-      :title="sourceUrl"
+      :title="editButtonLabel"
+      :aria-label="editButtonLabel"
       @click.stop="handleSourceClick(source)"
     />
   </el-checkbox>
@@ -85,6 +91,7 @@ const sourceGroup = computed(() =>
 const sourceMetaTitle = computed(() =>
   [sourceUrl.value, sourceGroup.value].filter(Boolean).join(' · '),
 )
+const editButtonLabel = computed(() => `编辑源：${sourceName.value}`)
 const isSearchable = computed(() => sourceHasSearchRule(props.source))
 const needsCookieJar = computed(() => sourceNeedsCookieJar(props.source))
 const usesJs = computed(() => sourceUsesJsRule(props.source))
@@ -99,13 +106,33 @@ const isSaveError = computed(() => {
 })
 </script>
 <style lang="scss" scoped>
+.source-item {
+  box-sizing: border-box;
+  width: 100%;
+  height: auto !important;
+  min-height: 58px;
+  padding: 8px 10px;
+  align-items: flex-start;
+  transition:
+    border-color 0.2s,
+    background-color 0.2s,
+    box-shadow 0.2s;
+}
+
 :deep(.el-checkbox__label) {
   flex: 1;
   display: flex;
   justify-content: space-between;
   align-items: center;
   min-width: 0;
+  padding-left: 8px;
+  line-height: 1.35;
   gap: 8px;
+}
+
+:deep(.el-checkbox__input) {
+  flex: 0 0 auto;
+  margin-top: 2px;
 }
 
 .source-item-main {
@@ -148,6 +175,17 @@ const isSaveError = computed(() => {
   white-space: nowrap;
 }
 
+.source-item-edit {
+  flex: 0 0 auto;
+  color: var(--el-color-primary);
+
+  &:hover,
+  &:focus-visible {
+    background: var(--el-color-primary-light-9);
+    color: var(--el-color-primary);
+  }
+}
+
 .error {
   border-color: var(--el-color-error) !important;
   color: var(--el-color-error) !important;
@@ -156,6 +194,64 @@ const isSaveError = computed(() => {
   --el-checkbox-checked-input-border-color: var(--el-color-error);
 }
 .edit {
-  border-color: var(--el-color-dark) !important;
+  border-color: var(--el-color-primary) !important;
+  background: var(--el-color-primary-light-9);
+  box-shadow: inset 0 0 0 1px var(--el-color-primary-light-5);
+
+  .source-item-name {
+    color: var(--el-color-primary);
+  }
+}
+
+:global(html.dark) .edit {
+  background: rgba(64, 158, 255, 0.12);
+}
+
+@media screen and (max-width: 960px) {
+  .source-item {
+    min-height: 80px;
+    padding: 8px;
+  }
+
+  :deep(.el-checkbox__label) {
+    gap: 6px;
+    align-items: flex-start;
+  }
+
+  .source-item-title-row {
+    flex-direction: column;
+    gap: 6px;
+    align-items: flex-start;
+  }
+
+  .source-item-name {
+    font-size: 13px;
+    line-height: 1.35;
+  }
+
+  .source-item-tags {
+    justify-content: flex-start;
+    gap: 3px;
+    max-width: 100%;
+
+    :deep(.el-tag) {
+      height: 20px;
+      padding: 0 5px;
+      line-height: 18px;
+    }
+  }
+
+  .source-item-meta {
+    margin-top: 2px;
+    font-size: 11px;
+    line-height: 1.35;
+  }
+
+  .source-item-edit {
+    width: 28px;
+    height: 28px;
+    min-height: 28px;
+    margin-top: -3px;
+  }
 }
 </style>

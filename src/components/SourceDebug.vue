@@ -1,24 +1,27 @@
 <template>
-  <el-input
-    v-if="isBookSource"
-    id="debug-key"
-    v-model="searchKey"
-    placeholder="搜索书名、作者"
-    :prefix-icon="Search"
-    aria-label="调试搜索关键词"
-    style="padding-bottom: 4px"
-    @keydown.enter="startDebug"
-  />
-  <el-input
-    ref="debugTextRef"
-    id="debug-text"
-    v-model="printDebug"
-    type="textarea"
-    readonly
-    :rows="29"
-    placeholder="这里用于输出调试信息"
-    aria-label="源调试输出"
-  />
+  <div class="source-debug">
+    <el-input
+      v-if="isBookSource"
+      id="debug-key"
+      v-model="searchKey"
+      class="source-debug__key"
+      placeholder="搜索书名、作者"
+      :prefix-icon="Search"
+      aria-label="调试搜索关键词"
+      @keydown.enter="startDebug"
+    />
+    <el-input
+      ref="debugTextRef"
+      id="debug-text"
+      v-model="printDebug"
+      class="source-debug__output"
+      type="textarea"
+      readonly
+      :rows="29"
+      placeholder="这里用于输出调试信息"
+      aria-label="源调试输出"
+    />
+  </div>
 </template>
 
 <script setup lang="ts">
@@ -102,13 +105,36 @@ onUnmounted(() => {
 </script>
 
 <style lang="scss" scoped>
-:deep(#debug-text) {
-  height: calc(100dvh - 45px - 36px - 5px);
+.source-debug {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 0;
+  height: 100%;
 }
 
-@media screen and (max-width: 750px) {
-  :deep(#debug-text) {
-    height: 50dvh;
+:deep(.source-debug__key) {
+  flex: 0 0 auto;
+}
+
+:deep(.source-debug__output) {
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 0;
+  width: 100%;
+}
+
+:deep(.source-debug__output .el-textarea__inner) {
+  flex: 1 1 auto;
+  min-height: 0;
+  height: 100%;
+  resize: none;
+}
+
+@media screen and (max-width: 960px) {
+  .source-debug {
+    min-height: 20rem;
   }
 }
 </style>

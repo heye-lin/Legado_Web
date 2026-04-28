@@ -213,7 +213,7 @@ const hasActiveFilter = computed(
   align-items: center;
 }
 
-@media screen and (max-width: 750px) {
+@media screen and (max-width: 960px) {
   .source-filter-row {
     display: grid;
     grid-template-columns: 1fr;

@@ -39,7 +39,7 @@ export const useSourceStore = defineStore('source', {
       rssSources: shallowRef([] as RssSource[]), // 临时存放所有订阅源
       savedSources: [] as Source[], // 批量保存成功的源
       currentSource: cloneSource(getEmptySource(currentSourceKind)) as Source, // 当前编辑的源
-      currentTab: localStorage.getItem('tabName') || 'editTab',
+      currentTab: localStorage.getItem('tabName') || 'editList',
       editTabSource: {} as Source, // 生成序列化的json数据
       isDebugging: false,
     }
@@ -108,9 +108,7 @@ export const useSourceStore = defineStore('source', {
       const deleteKeys = new Set(data.map(getSourceUniqueKey))
       const sources = (
         isBookSourceKind(targetKind) ? this.bookSources : this.rssSources
-      ).filter(
-        source => !deleteKeys.has(getSourceUniqueKey(source)),
-      )
+      ).filter(source => !deleteKeys.has(getSourceUniqueKey(source)))
       this.saveSources(sources, targetKind)
     },
     //保存当前编辑源

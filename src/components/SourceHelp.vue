@@ -19,7 +19,7 @@ const isBookSource = computed(() =>
         {{
           isBookSource
             ? '纯 Web 版支持保存书源，并提供受限在线搜书。生产服务会通过同源接口抓取并解析搜索结果，结果可加入书架后再解析详情、目录与正文缓存到 PostgreSQL。“当前 Web 候选”只是静态初筛，复杂 Legado/Rhino JS、CookieJar、登录流程和反爬绕过仍不支持。'
-            : '纯 Web 版支持保存订阅源，并可通过 URL 订阅导入书源或订阅源；书架页的在线搜书只使用书源，不使用订阅源。'
+            : '纯 Web 版支持保存订阅源，并可通过 URL 订阅（合并）导入书源或订阅源；书架页的在线搜书只使用书源，不使用订阅源。'
         }}
       </p>
 
@@ -36,7 +36,7 @@ const isBookSource = computed(() =>
           这类 CSS 选择器和简单属性抽取。
         </li>
         <li v-if="!isBookSource">
-          可点击 <code>URL 订阅</code> 输入源订阅地址，例如
+          可点击 <code>URL 订阅（合并）</code> 输入源订阅地址，例如
           <code>https://shuyuan.yiove.com/sub.json</code>；当前会合并导入 JSON
           中识别到的书源和订阅源，不会清空已有本地源。
         </li>
@@ -184,7 +184,7 @@ const isBookSource = computed(() =>
   border-color: #343a42;
 }
 
-@media screen and (max-width: 750px) {
+@media screen and (max-width: 960px) {
   .source-help {
     gap: 12px;
   }

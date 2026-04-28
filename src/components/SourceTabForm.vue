@@ -1,5 +1,5 @@
 <template>
-  <el-tabs id="source-edit">
+  <el-tabs id="source-edit" class="source-tab-form">
     <el-tab-pane
       v-for="{ name, children } in sourceSections"
       :label="name"
@@ -22,15 +22,7 @@
           :required="required"
         >
           <el-input
-            v-if="type === 'String' && namespace === undefined"
-            type="textarea"
-            :model-value="getTextValue(id)"
-            :placeholder="hint"
-            autosize
-            @update:model-value="setFieldValue(id, $event)"
-          />
-          <el-input
-            v-if="type === 'String' && namespace !== undefined"
+            v-if="type === 'String'"
             type="textarea"
             :model-value="getTextValue(id, namespace)"
             :placeholder="hint"
@@ -126,19 +118,49 @@ const getNumberValue = (id: string) => {
 </script>
 
 <style lang="scss" scoped>
+.source-tab-form {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-height: 0;
+  height: 100%;
+}
+
 :deep(.el-tab-pane) {
-  height: calc(100dvh - 55px);
-  padding-top: 15px;
+  flex: 1 1 auto;
+  min-height: 0;
+  padding-top: 6px;
   padding-right: 5px;
   overflow-y: auto;
 }
+
 :deep(.el-tabs__header) {
-  margin: 0;
+  order: -1;
+  flex: 0 0 auto;
+  margin: 0 0 12px;
+  padding: 0 2px;
 }
 
-@media screen and (max-width: 750px) {
-  :deep(.el-tab-pane) {
+:deep(.el-tabs__content) {
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+:deep(.el-form-item) {
+  margin-bottom: 14px;
+}
+
+@media screen and (max-width: 960px) {
+  .source-tab-form {
     height: auto;
+  }
+
+  :deep(.el-tabs__content) {
+    display: block;
+  }
+
+  :deep(.el-tab-pane) {
     max-height: none;
     overflow-y: visible;
   }

@@ -1,67 +1,94 @@
 <template>
-  <source-filter-panel
-    v-model:keyword="searchKey"
-    v-model:enabled="enabledFilter"
-    v-model:feature="featureFilter"
-    v-model:field="fieldFilter"
-    :total="sources.length"
-    :matched="sourcesFiltered.length"
-    :selected="sourceUrlSelect.length"
-    :stats="sourceStats"
-    @reset="resetFilters"
-  />
-  <div class="tool">
-    <el-button @click="importSourceFile" :icon="Folder">导入 JSON</el-button>
-    <el-button
-      :disabled="sourcesFiltered.length === 0"
-      @click="outExport"
-      :icon="Download"
-    >
-      {{ exportButtonText }}</el-button
-    >
-    <el-button
-      type="danger"
-      :icon="Delete"
-      @click="deleteSelectSources"
-      :disabled="sourceSelect.length === 0"
-      >{{ deleteButtonText }}</el-button
-    >
-    <el-button
-      :disabled="sourcesFiltered.length === 0"
-      @click="selectFilteredSources"
-    >
-      全选筛选 {{ sourcesFiltered.length }}
-    </el-button>
-    <el-button
-      :disabled="sourceUrlSelect.length === 0"
-      @click="sourceUrlSelect = []"
-    >
-      清空选择
-    </el-button>
-    <el-button
-      type="danger"
-      :icon="Delete"
-      @click="clearAllSources"
-      :disabled="sources.length === 0"
-      >清空全部 {{ sources.length }}</el-button
-    >
-  </div>
-  <div v-if="sources.length === 0" class="empty-source-list">
-    暂无源。可使用“URL 订阅”导入订阅地址，或点击“导入 JSON”导入本地源文件。
-  </div>
-  <div v-else-if="sourcesFiltered.length === 0" class="empty-source-list">
-    没有匹配当前筛选条件的源，请调整关键词或清空筛选。
-  </div>
-  <el-checkbox-group id="source-list" v-model="sourceUrlSelect">
-    <virtual-list
-      v-if="sourcesFiltered.length > 0"
-      style="height: 100%; overflow-y: auto; overflow-x: hidden"
-      :data-key="(source: Source) => getSourceUniqueKey(source)"
-      :data-sources="sourcesFiltered"
-      :data-component="SourceItem"
-      :estimate-size="76"
+  <section class="source-list-panel">
+    <source-filter-panel
+      v-model:keyword="searchKey"
+      v-model:enabled="enabledFilter"
+      v-model:feature="featureFilter"
+      v-model:field="fieldFilter"
+      :total="sources.length"
+      :matched="sourcesFiltered.length"
+      :selected="sourceUrlSelect.length"
+      :stats="sourceStats"
+      compact
+      @reset="resetFilters"
     />
-  </el-checkbox-group>
+    <div class="tool" role="toolbar" aria-label="源列表操作">
+      <div
+        class="tool-group tool-group--primary"
+        role="group"
+        aria-label="主要操作"
+      >
+        <el-button type="primary" @click="importSourceFile" :icon="Folder">
+          导入 JSON（替换）
+        </el-button>
+        <el-button
+          type="primary"
+          plain
+          :disabled="sourcesFiltered.length === 0"
+          @click="outExport"
+          :icon="Download"
+        >
+          {{ exportButtonText }}</el-button
+        >
+      </div>
+      <div
+        class="tool-group tool-group--selection"
+        role="group"
+        aria-label="选择操作"
+      >
+        <el-button
+          :disabled="sourcesFiltered.length === 0"
+          @click="selectFilteredSources"
+        >
+          全选筛选 {{ sourcesFiltered.length }}
+        </el-button>
+        <el-button
+          :disabled="sourceUrlSelect.length === 0"
+          @click="sourceUrlSelect = []"
+        >
+          清空选择
+        </el-button>
+      </div>
+      <div
+        class="tool-group tool-group--danger"
+        role="group"
+        aria-label="危险操作"
+      >
+        <el-button
+          type="danger"
+          plain
+          :icon="Delete"
+          @click="deleteSelectSources"
+          :disabled="sourceSelect.length === 0"
+          >{{ deleteButtonText }}</el-button
+        >
+        <el-button
+          type="danger"
+          :icon="Delete"
+          @click="clearAllSources"
+          :disabled="sources.length === 0"
+          >清空全部 {{ sources.length }}</el-button
+        >
+      </div>
+    </div>
+    <div v-if="sources.length === 0" class="empty-source-list">
+      暂无源。可使用“URL 订阅（合并）”导入订阅地址，或点击“导入
+      JSON（替换）”导入本地源文件。
+    </div>
+    <div v-else-if="sourcesFiltered.length === 0" class="empty-source-list">
+      没有匹配当前筛选条件的源，请调整关键词或清空筛选。
+    </div>
+    <el-checkbox-group id="source-list" v-model="sourceUrlSelect">
+      <virtual-list
+        v-if="sourcesFiltered.length > 0"
+        style="height: 100%; overflow-y: auto; overflow-x: hidden"
+        :data-key="(source: Source) => getSourceUniqueKey(source)"
+        :data-sources="sourcesFiltered"
+        :data-component="SourceItem"
+        :estimate-size="88"
+      />
+    </el-checkbox-group>
+  </section>
 </template>
 
 <script setup lang="ts">
@@ -89,7 +116,7 @@ import {
   persistSourceConfig,
   readSourceConfigFile,
 } from '@/utils/sourceFile'
-import { getCurrentSourceKind } from '@/utils/sourceKind'
+import { getCurrentSourceKind, sourceKindDisplayName } from '@/utils/sourceKind'
 
 const store = useSourceStore()
 const sourceUrlSelect = ref<string[]>([])
@@ -234,6 +261,24 @@ const clearAllSources = async () => {
   sourceUrlSelect.value = []
 }
 
+const confirmImportReplacement = async (kind = store.currentSourceKind) => {
+  if (sources.value.length === 0) return true
+  try {
+    await ElMessageBox.confirm(
+      `导入 JSON 将替换当前全部 ${sources.value.length} 条${sourceKindDisplayName(kind)}。建议先导出备份，确定继续？`,
+      '导入 JSON（替换）',
+      {
+        confirmButtonText: '继续替换',
+        cancelButtonText: '取消',
+        type: 'warning',
+      },
+    )
+    return true
+  } catch {
+    return false
+  }
+}
+
 //导入本地文件
 const importSourceFile = () => {
   selectJsonFile(async file => {
@@ -241,9 +286,13 @@ const importSourceFile = () => {
     try {
       const kind = getCurrentSourceKind()
       const jsonData = await readSourceConfigFile(file, kind)
+      if (!(await confirmImportReplacement(kind))) return
       await persistSourceConfig(jsonData, kind)
       store.saveSources(jsonData, kind)
-      ElMessage.success(`已导入 ${jsonData.length} 条源`)
+      sourceUrlSelect.value = []
+      ElMessage.success(
+        `已替换导入 ${jsonData.length} 条${sourceKindDisplayName(kind)}`,
+      )
     } catch (error) {
       ElMessage.error('上传的源格式错误: ' + getErrorMessage(error))
     }
@@ -260,19 +309,57 @@ const outExport = () => {
 </script>
 
 <style lang="scss" scoped>
+.source-list-panel {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-height: 0;
+  height: 100%;
+}
+
 .tool {
   display: flex;
   flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+  justify-content: space-between;
+  margin: 10px 0 8px;
+}
+
+.tool-group {
+  display: flex;
+  flex: 1 1 auto;
+  flex-wrap: wrap;
   gap: 8px;
-  margin: 10px 0 4px;
-  justify-content: center;
+  align-items: center;
+  min-width: 0;
+  padding: 8px;
+  border: 1px solid var(--el-border-color-lighter);
+  border-radius: 12px;
+  background: var(--el-fill-color-extra-light);
 
   :deep(.el-button + .el-button) {
     margin-left: 0;
   }
 }
 
+.tool-group--primary {
+  border-color: var(--el-color-primary-light-7);
+  background: var(--el-color-primary-light-9);
+}
+
+.tool-group--selection {
+  justify-content: center;
+}
+
+.tool-group--danger {
+  flex-grow: 0;
+  border-color: var(--el-color-danger-light-7);
+  background: var(--el-color-danger-light-9);
+}
+
 .empty-source-list {
+  flex: 0 0 auto;
   margin-top: 24px;
   padding: 16px;
   border: 1px dashed var(--el-border-color);
@@ -284,17 +371,38 @@ const outExport = () => {
 
 #source-list {
   margin-top: 6px;
-  height: calc(100dvh - 262px);
+  flex: 1 1 0;
+  min-height: 0;
+  overflow: hidden;
+
   :deep(.el-checkbox) {
     margin-bottom: 8px;
     width: 100%;
   }
 }
 
-@media screen and (max-width: 750px) {
+@media screen and (max-width: 960px) {
+  .source-list-panel {
+    height: auto;
+  }
+
+  .tool {
+    display: grid;
+    grid-template-columns: 1fr;
+  }
+
+  .tool-group {
+    padding: 6px;
+  }
+
+  .tool-group--selection,
+  .tool-group--danger {
+    justify-content: flex-start;
+  }
+
   #source-list {
-    height: min(60dvh, 520px);
-    min-height: 320px;
+    flex: 0 0 auto;
+    height: clamp(280px, 58dvh, 420px);
   }
 }
 </style>
