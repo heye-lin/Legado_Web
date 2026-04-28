@@ -9,7 +9,12 @@
     }"
   >
     {{ getSourceName(source) }}
-    <el-button text :icon="Edit" @click="handleSourceClick(source)" />
+    <el-button
+      text
+      :icon="Edit"
+      :title="sourceUrl"
+      @click.stop="handleSourceClick(source)"
+    />
   </el-checkbox>
 </template>
 

@@ -89,7 +89,7 @@
 </template>
 
 <script setup lang="ts">
-import API, { apiTargetName } from '@api'
+import API, { getApiTargetName } from '@api'
 import { CircleCheckFilled, Edit } from '@element-plus/icons-vue'
 import hotkeys from 'hotkeys-js'
 import { getErrorMessage, selectJsonFile } from '@utils/jsonFile'
@@ -165,7 +165,7 @@ const push = () => {
             store.setPushReturnSources(okData)
           }
           ElMessage({
-            message: `批量推送源到「${apiTargetName}」\n共计：${
+            message: `批量推送源到「${getApiTargetName()}」\n共计：${
               sources.length
             } 条\n成功：${okData.length} 条\n失败：${
               sources.length - okData.length
@@ -211,7 +211,7 @@ const saveSource = () => {
         const sourceName = getSourceName(source)
         if (data.isSuccess) {
           ElMessage({
-            message: `源《${sourceName}》已成功保存到「${apiTargetName}」`,
+            message: `源《${sourceName}》已成功保存到「${getApiTargetName()}」`,
             type: 'success',
           })
           // 保存到 store

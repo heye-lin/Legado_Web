@@ -11,6 +11,7 @@
           v-model="searchWord"
           class="search-input"
           :prefix-icon="SearchIcon"
+          @keyup.enter="searchBook"
         >
           <template #append>
             <el-button
@@ -52,8 +53,12 @@
         <div class="setting-wrapper">
           <div class="setting-title">基本设定</div>
           <div class="setting-item">
-            <el-tag type="success" size="large" class="setting-connect">
-              PostgreSQL 持久化
+            <el-tag
+              :type="apiTargetName === '浏览器本地' ? 'warning' : 'success'"
+              size="large"
+              class="setting-connect"
+            >
+              {{ apiTargetName }}
             </el-tag>
             <el-button
               class="standalone-action-button"
@@ -178,7 +183,15 @@
           </el-button>
         </div>
         <div v-if="sourceSearchReports.length > 0" class="source-search-report">
-          {{ sourceSearchReportText }}
+          <el-tag
+            v-for="item in sourceSearchReportCountItems"
+            :key="item.status"
+            :type="item.type"
+            effect="plain"
+            size="small"
+          >
+            {{ item.label }} {{ item.count }}
+          </el-tag>
         </div>
         <div
           v-if="sourceSearchReportDetails.length > 0"
@@ -188,10 +201,38 @@
             v-for="report in sourceSearchReportDetails"
             :key="`${report.sourceUrl}:${report.status}`"
             class="source-search-report-detail"
+            :class="`is-${report.status}`"
+            :title="getSourceSearchReportTitle(report)"
           >
-            {{ sourceSearchReportStatusText(report.status) }} ·
-            {{ report.sourceName }}：{{ report.message }}
+            <el-tag
+              size="small"
+              effect="dark"
+              :type="sourceSearchReportTagType(report.status)"
+            >
+              {{ sourceSearchReportStatusText(report.status) }}
+            </el-tag>
+            <span class="source-search-report-source">
+              {{ report.sourceName }}
+            </span>
+            <span class="source-search-report-message">
+              {{ formatSourceSearchReportMessage(report.message) }}
+            </span>
           </div>
+          <el-button
+            v-if="
+              sourceSearchReportHiddenCount > 0 || sourceSearchReportsExpanded
+            "
+            class="source-search-report-toggle"
+            text
+            size="small"
+            @click="sourceSearchReportsExpanded = !sourceSearchReportsExpanded"
+          >
+            {{
+              sourceSearchReportsExpanded
+                ? '收起报告'
+                : `查看全部 ${sourceSearchReportIssueCount} 条异常报告`
+            }}
+          </el-button>
         </div>
         <div class="source-search-tip">
           点击结果会在新标签页打开来源站详情；当前不能加入书架或在线阅读。当前生产服务会通过同源服务端接口搜索书源，不再依赖浏览器
@@ -221,7 +262,14 @@
         </div>
       </div>
       <div v-else-if="isSearchingSources" class="source-search-empty">
-        正在搜索「{{ sourceSearchKeyword }}」，可点击左侧按钮取消。
+        正在搜索「{{
+          sourceSearchKeyword
+        }}」，可点击“取消”或“返回本地书架”中止搜索。
+      </div>
+      <div v-else-if="showLocalSearchEmptyState" class="source-search-empty">
+        本地书架没有匹配「{{
+          searchWord.trim()
+        }}」的书籍。可清空关键词，或点击“用书源搜书”搜索在线来源。
       </div>
       <div
         v-else-if="sourceSearchActive && books.length === 0"
@@ -279,7 +327,7 @@ import githubUrl from '@/assets/imgs/github.png'
 import { useLoading } from '@/hooks/loading'
 import { useStandaloneBookImport } from '@/hooks/useStandaloneBookImport'
 import { Search as SearchIcon } from '@element-plus/icons-vue'
-import API from '@api'
+import API, { getApiTargetName, subscribeApiAvailability } from '@api'
 import type { Book, SourceSearchBook, SourceSearchReport } from '@/book'
 import {
   type ReadingRecentBook,
@@ -327,6 +375,8 @@ const sourceSearchKeyword = ref('')
 const isSearchingSources = ref(false)
 const sourceSearchDialogVisible = ref(false)
 const sourceSearchInput = ref('')
+const sourceSearchReportsExpanded = ref(false)
+const apiTargetName = ref(getApiTargetName())
 let sourceSearchRunId = 0
 let sourceSearchAbortController: AbortController | undefined
 const books = computed(() =>
@@ -340,39 +390,73 @@ const showStandaloneEmptyState = computed(
   () =>
     !sourceSearchActive.value && !isLoading.value && shelf.value.length === 0,
 )
-const sourceSearchReportText = computed(() => {
-  const reports = sourceSearchReports.value
-  const resultCount = reports.filter(
-    report => report.status === 'success',
-  ).length
-  const emptyCount = reports.filter(report => report.status === 'empty').length
-  const failedCount = reports.filter(
-    report => report.status === 'failed',
-  ).length
-  const skippedCount = reports.filter(
-    report => report.status === 'skipped',
-  ).length
-  const unsupportedCount = reports.filter(
-    report => report.status === 'unsupported',
-  ).length
-  return `有结果 ${resultCount} 个，无结果 ${emptyCount} 个，失败 ${failedCount} 个，不支持 ${unsupportedCount} 个，跳过 ${skippedCount} 个`
-})
-const sourceSearchReportDetails = computed(() =>
-  sourceSearchReports.value
-    .filter(report => report.status !== 'success' || report.count === 0)
-    .slice(0, 8),
+const isLocalSearching = computed(
+  () => !sourceSearchActive.value && searchWord.value.trim() !== '',
+)
+const showLocalSearchEmptyState = computed(
+  () => isLocalSearching.value && books.value.length === 0,
 )
 
-const sourceSearchReportStatusText = (status: SourceSearchReport['status']) => {
-  const statusText: Record<SourceSearchReport['status'], string> = {
-    success: '成功',
-    empty: '无结果',
-    skipped: '跳过',
-    unsupported: '不支持',
-    failed: '失败',
-  }
-  return statusText[status]
+type SourceSearchReportTagType = 'success' | 'info' | 'warning' | 'danger'
+
+const sourceSearchReportMeta: Record<
+  SourceSearchReport['status'],
+  { label: string; type: SourceSearchReportTagType }
+> = {
+  success: { label: '有结果', type: 'success' },
+  empty: { label: '无结果', type: 'info' },
+  failed: { label: '失败', type: 'danger' },
+  unsupported: { label: '不支持', type: 'warning' },
+  skipped: { label: '跳过', type: 'info' },
 }
+const sourceSearchReportStatusOrder: SourceSearchReport['status'][] = [
+  'success',
+  'empty',
+  'failed',
+  'unsupported',
+  'skipped',
+]
+const sourceSearchReportCountItems = computed(() =>
+  sourceSearchReportStatusOrder.map(status => ({
+    status,
+    label: sourceSearchReportMeta[status].label,
+    type: sourceSearchReportMeta[status].type,
+    count: sourceSearchReports.value.filter(report => report.status === status)
+      .length,
+  })),
+)
+const sourceSearchIssueReports = computed(() =>
+  sourceSearchReports.value.filter(
+    report => report.status !== 'success' || report.count === 0,
+  ),
+)
+const sourceSearchReportIssueCount = computed(
+  () => sourceSearchIssueReports.value.length,
+)
+const sourceSearchReportDetails = computed(() =>
+  sourceSearchReportsExpanded.value
+    ? sourceSearchIssueReports.value
+    : sourceSearchIssueReports.value.slice(0, 8),
+)
+const sourceSearchReportHiddenCount = computed(() =>
+  Math.max(0, sourceSearchIssueReports.value.length - 8),
+)
+
+const sourceSearchReportStatusText = (status: SourceSearchReport['status']) =>
+  sourceSearchReportMeta[status].label
+
+const sourceSearchReportTagType = (status: SourceSearchReport['status']) =>
+  sourceSearchReportMeta[status].type
+
+const formatSourceSearchReportMessage = (message: string) => {
+  const normalized = message.replace(/\s+/g, ' ').trim()
+  return normalized.length > 180
+    ? `${normalized.slice(0, 180).trimEnd()}…`
+    : normalized
+}
+
+const getSourceSearchReportTitle = (report: SourceSearchReport) =>
+  `${sourceSearchReportStatusText(report.status)} · ${report.sourceName}：${report.message.replace(/\s+/g, ' ').trim()}`
 
 const getSourceSearchEmptyMessage = (reports: SourceSearchReport[]) => {
   if (reports.length === 0) return '当前没有可用书源，请先到书源管理导入书源。'
@@ -400,6 +484,7 @@ const resetSourceSearchState = () => {
   sourceSearchBooks.value = []
   sourceSearchReports.value = []
   sourceSearchKeyword.value = ''
+  sourceSearchReportsExpanded.value = false
 }
 
 const cancelSourceSearchRequest = () => {
@@ -605,6 +690,12 @@ onMounted(() => {
     ElMessage.error(`加载书架失败：${getErrorMessage(error)}`)
   })
 })
+
+onUnmounted(
+  subscribeApiAvailability(() => {
+    apiTargetName.value = getApiTargetName()
+  }),
+)
 </script>
 
 <style lang="scss" scoped>
@@ -798,15 +889,45 @@ onMounted(() => {
       line-height: 1.6;
     }
 
+    .source-search-report {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
     .source-search-report-details {
-      max-height: 120px;
+      max-height: 220px;
       overflow: auto;
     }
 
     .source-search-report-detail {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 4px 0;
+      overflow: hidden;
+    }
+
+    .source-search-report-source {
+      flex: 0 0 auto;
+      max-width: 160px;
+      color: #606266;
+      font-weight: 600;
       overflow: hidden;
       text-overflow: ellipsis;
       white-space: nowrap;
+    }
+
+    .source-search-report-message {
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .source-search-report-toggle {
+      margin-top: 4px;
+      padding-left: 0;
     }
 
     .source-search-empty {

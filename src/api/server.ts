@@ -21,6 +21,9 @@ const JSON_HEADERS = { 'Content-Type': 'application/json' }
 const SERVER_SOURCE_SYNC_KEY = 'legado.pg.serverSourceSynced'
 
 let serverAvailable: boolean | undefined
+const serverAvailabilityListeners = new Set<
+  (available: boolean | undefined) => void
+>()
 
 const getErrorMessage = (error: unknown) =>
   error instanceof Error ? error.message : String(error)
@@ -34,6 +37,12 @@ const apiPath = (path: string, params?: Record<string, string | number>) => {
     url.searchParams.set(key, String(value)),
   )
   return `${url.pathname}${url.search}`
+}
+
+const setServerAvailable = (available: boolean | undefined) => {
+  if (serverAvailable === available) return
+  serverAvailable = available
+  serverAvailabilityListeners.forEach(listener => listener(available))
 }
 
 const request = async <T>(
@@ -51,7 +60,7 @@ const request = async <T>(
   if (!response.ok || !payload.isSuccess) {
     throw new Error(payload.errorMsg || `HTTP ${response.status}`)
   }
-  serverAvailable = true
+  setServerAvailable(true)
   return payload.data
 }
 
@@ -62,7 +71,7 @@ const withFallback = async <T>(
   try {
     return await run()
   } catch {
-    serverAvailable = false
+    setServerAvailable(false)
     return fallback()
   }
 }
@@ -237,7 +246,7 @@ const searchBookSources = async (
     }
   } catch (error) {
     if (options.signal?.aborted || isAbortError(error)) throw error
-    serverAvailable = false
+    setServerAvailable(false)
     return {
       data: {
         isSuccess: false,
@@ -401,6 +410,15 @@ const getProxyImageUrl = (
 
 export const getApiTargetName = () =>
   serverAvailable === false ? '浏览器本地' : 'PostgreSQL 持久化'
+
+export const subscribeApiAvailability = (
+  listener: (available: boolean | undefined) => void,
+) => {
+  serverAvailabilityListeners.add(listener)
+  return () => {
+    serverAvailabilityListeners.delete(listener)
+  }
+}
 
 export default {
   getReadConfig,

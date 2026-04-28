@@ -108,7 +108,7 @@ const getSourceDescription = (book: BookItem) => {
 
 const getCover = (book: BookItem) => {
   const { bookUrl, coverUrl } = book
-  if (coverUrl === undefined) {
+  if (!coverUrl) {
     return isSourceSearchBook(book)
       ? getPlaceholderCover(book)
       : API.getProxyCoverUrl(bookUrl)
@@ -157,17 +157,21 @@ const proxyImage = (evt: Event, book: BookItem) => {
         display: flex;
         flex-direction: column;
         justify-content: space-around;
-        align-items: left;
+        align-items: flex-start;
         height: 112px;
         margin-left: 20px;
         flex: 1;
+        min-width: 0;
         overflow: hidden;
 
         .name {
-          width: fit-content;
+          max-width: 100%;
           font-size: 16px;
           font-weight: 700;
           color: #33373d;
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
         }
 
         .sub {
@@ -181,9 +185,20 @@ const proxyImage = (evt: Event, book: BookItem) => {
 
           .update-info {
             display: flex;
+            min-width: 0;
             .dot {
+              flex: 0 0 auto;
               margin: 0 7px;
             }
+          }
+
+          .author,
+          .date,
+          .size {
+            min-width: 0;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
           }
         }
 

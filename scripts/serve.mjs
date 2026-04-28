@@ -1847,7 +1847,10 @@ const serveStatic = async (req, res, url) => {
     send(res, 200, buffer, {
       'Content-Type': contentType,
       ETag: tag,
-      'Cache-Control': 'no-store',
+      'Cache-Control':
+        relativePath.startsWith('assets/') && !filePath.endsWith('.html')
+          ? 'public, max-age=31536000, immutable'
+          : 'no-store',
     })
   } catch {
     send(res, 404, 'Not Found', { 'Content-Type': 'text/plain; charset=utf-8' })

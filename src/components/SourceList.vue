@@ -6,7 +6,7 @@
     placeholder="筛选源"
   />
   <div class="tool">
-    <el-button @click="importSourceFile" :icon="Folder">打开</el-button>
+    <el-button @click="importSourceFile" :icon="Folder">导入 JSON</el-button>
     <el-button
       :disabled="sourcesFiltered.length === 0"
       @click="outExport"
@@ -26,12 +26,11 @@
       :icon="Delete"
       @click="clearAllSources"
       :disabled="sources.length === 0"
-      >清空</el-button
+      >清空全部</el-button
     >
   </div>
   <div v-if="sourcesFiltered.length === 0" class="empty-source-list">
-    暂无源。可点击左侧「⇩URL订阅」输入订阅地址，点击「⇩导入源」导入
-    JSON，或填写表单后点击「✓保存源」。
+    暂无源。可使用“URL 订阅”导入订阅地址，或点击“导入 JSON”导入本地源文件。
   </div>
   <el-checkbox-group id="source-list" v-model="sourceUrlSelect">
     <virtual-list
@@ -96,6 +95,19 @@ const deleteSelectSources = async () => {
   const kind = getCurrentSourceKind()
   const selectedSources = sourceSelect.value
   try {
+    await ElMessageBox.confirm(
+      `确定删除选中的 ${selectedSources.length} 条源？`,
+      '删除源',
+      {
+        confirmButtonText: '删除',
+        cancelButtonText: '取消',
+        type: 'warning',
+      },
+    )
+  } catch {
+    return
+  }
+  try {
     const { data } = await API.deleteSource(selectedSources, kind)
     if (!data.isSuccess) {
       ElMessage.error(data.errorMsg)
@@ -113,6 +125,19 @@ const deleteSelectSources = async () => {
 }
 const clearAllSources = async () => {
   const kind = getCurrentSourceKind()
+  try {
+    await ElMessageBox.confirm(
+      `确定清空当前全部 ${sources.value.length} 条源？此操作不可撤销，建议先导出备份。`,
+      '清空全部源',
+      {
+        confirmButtonText: '清空全部',
+        cancelButtonText: '取消',
+        type: 'warning',
+      },
+    )
+  } catch {
+    return
+  }
   try {
     await persistSourceConfig([], kind)
   } catch (error) {

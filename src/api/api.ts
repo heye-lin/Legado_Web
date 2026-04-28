@@ -1,4 +1,4 @@
-import serverApi from './server'
+import serverApi, { getApiTargetName, subscribeApiAvailability } from './server'
 
 export type LegadoApiResponse<T> = {
   isSuccess: boolean
@@ -6,6 +6,6 @@ export type LegadoApiResponse<T> = {
   data: T
 }
 
-export const apiTargetName = 'PostgreSQL 持久化'
+export { getApiTargetName, subscribeApiAvailability }
 
 export default serverApi
