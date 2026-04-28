@@ -287,9 +287,8 @@ const scheduleToShelf = () => {
 }
 
 // 获取章节内容
-const chapterData = ref<{ index: number; content: string[]; title: string }[]>(
-  [],
-)
+type ChapterRenderData = { index: number; content: string[]; title: string }
+const chapterData = ref<ChapterRenderData[]>([])
 let activeContentRequestId = 0
 let disposed = false
 const noPoint = ref(true)
@@ -300,6 +299,90 @@ const normalizeReadingNumber = (value: string | number | null) => {
 const clampChapterIndex = (index: number, chapterCount: number) => {
   if (chapterCount <= 0) return 0
   return Math.min(normalizeReadingNumber(index), chapterCount - 1)
+}
+const getContentErrorMessage = (error: unknown) => {
+  if (error instanceof Error) return error.message
+  if (typeof error === 'string') return error
+  if (
+    typeof error === 'object' &&
+    error !== null &&
+    'errorMsg' in error &&
+    typeof error.errorMsg === 'string'
+  ) {
+    return error.errorMsg
+  }
+  return String(error)
+}
+const isActiveContentRequest = (requestId: number, requestBookUrl: string) =>
+  !disposed &&
+  requestId === activeContentRequestId &&
+  store.readingBook.bookUrl === requestBookUrl
+const finishChapterRender = () => {
+  noPoint.value = false
+  store.setShowContent(true)
+}
+const writeChapterData = (
+  data: ChapterRenderData,
+  reloadChapter: boolean,
+  chapterPos: number,
+) => {
+  const insertIndex = chapterData.value.findIndex(
+    chapter => chapter.index >= data.index,
+  )
+  if (insertIndex === -1) {
+    chapterData.value.push(data)
+  } else if (chapterData.value[insertIndex].index === data.index) {
+    chapterData.value[insertIndex] = data
+  } else {
+    chapterData.value.splice(insertIndex, 0, data)
+  }
+  finishChapterRender()
+  if (reloadChapter) toChapterPos(chapterPos)
+}
+const renderChapterError = (
+  index: number,
+  title: string,
+  message: string,
+) => {
+  const errorMessage = message || '获取章节内容失败'
+  ElMessage({ message: errorMessage, type: 'error' })
+  writeChapterData({ index, content: [errorMessage], title }, false, 0)
+}
+const loadChapterContent = async (
+  requestBookUrl: string,
+  chapterIndex: number,
+  displayIndex: number,
+  title: string,
+  requestId: number,
+  reloadChapter: boolean,
+  chapterPos: number,
+) => {
+  try {
+    const res = await API.getBookContent(requestBookUrl, chapterIndex)
+    if (!isActiveContentRequest(requestId, requestBookUrl)) return
+
+    if (!res.data.isSuccess) {
+      renderChapterError(displayIndex, title, res.data.errorMsg)
+      return
+    }
+
+    writeChapterData(
+      {
+        index: displayIndex,
+        content: res.data.data.split(/\n+/),
+        title,
+      },
+      reloadChapter,
+      chapterPos,
+    )
+  } catch (error) {
+    if (!isActiveContentRequest(requestId, requestBookUrl)) return
+    renderChapterError(
+      displayIndex,
+      title,
+      `获取章节内容失败：${getContentErrorMessage(error)}`,
+    )
+  }
 }
 const getContent = (index: number, reloadChapter = true, chapterPos = 0) => {
   const bookUrl = store.readingBook.bookUrl
@@ -324,46 +407,15 @@ const getContent = (index: number, reloadChapter = true, chapterPos = 0) => {
     ? ++activeContentRequestId
     : activeContentRequestId
 
-  loadingWrapper(
-    API.getBookContent(requestBookUrl, chapterIndex).then(
-      res => {
-        if (
-          disposed ||
-          requestId !== activeContentRequestId ||
-          store.readingBook.bookUrl !== requestBookUrl
-        ) {
-          return
-        }
-        if (res.data.isSuccess) {
-          const data = res.data.data
-          const content = data.split(/\n+/)
-          chapterData.value.push({ index, content, title })
-          if (reloadChapter) toChapterPos(chapterPos)
-        } else {
-          ElMessage({ message: res.data.errorMsg, type: 'error' })
-          const content = [res.data.errorMsg]
-          chapterData.value.push({ index, content, title })
-        }
-        store.setContentLoading(true)
-        noPoint.value = false
-        store.setShowContent(true)
-        if (!res.data.isSuccess) {
-          throw res.data
-        }
-      },
-      err => {
-        if (
-          disposed ||
-          requestId !== activeContentRequestId ||
-          store.readingBook.bookUrl !== requestBookUrl
-        ) {
-          return
-        }
-        const content = ['获取章节内容失败！']
-        chapterData.value.push({ index, content, title })
-        store.setShowContent(true)
-        throw err
-      },
+  void loadingWrapper(
+    loadChapterContent(
+      requestBookUrl,
+      chapterIndex,
+      index,
+      title,
+      requestId,
+      reloadChapter,
+      chapterPos,
     ),
   )
 }
@@ -420,7 +472,6 @@ const onVisibilityChange = () => {
 
 // 章节切换
 const toNextChapter = () => {
-  store.setContentLoading(true)
   const index = chapterIndex.value + 1
   if (catalog.value[index] !== undefined) {
     ElMessage({
@@ -437,7 +488,6 @@ const toNextChapter = () => {
   }
 }
 const toPreChapter = () => {
-  store.setContentLoading(true)
   const index = chapterIndex.value - 1
   if (catalog.value[index] !== undefined) {
     ElMessage({

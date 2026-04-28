@@ -64,14 +64,15 @@ const request = async <T>(
   path: string,
   options: RequestOptions = {},
 ): Promise<T> => {
-  const allowRequestFallback = options.allowApiErrorFallback !== false
+  const { allowApiErrorFallback, ...fetchOptions } = options
+  const allowRequestFallback = allowApiErrorFallback !== false
   let response: Response
   try {
     response = await fetch(path, {
-      ...options,
+      ...fetchOptions,
       headers: {
-        ...(options.body === undefined ? {} : JSON_HEADERS),
-        ...options.headers,
+        ...(fetchOptions.body === undefined ? {} : JSON_HEADERS),
+        ...fetchOptions.headers,
       },
     })
   } catch (error) {
@@ -96,8 +97,10 @@ const request = async <T>(
       payload.errorCode === DATABASE_UNAVAILABLE_ERROR_CODE
     setServerAvailable(databaseUnavailable ? false : true)
     const message = payload.errorMsg || `HTTP ${response.status}`
-    const allowFallback = allowRequestFallback && databaseUnavailable
-    throw new ApiRequestError(message, allowFallback)
+    throw new ApiRequestError(
+      message,
+      allowRequestFallback && databaseUnavailable,
+    )
   }
   setServerAvailable(true)
   return payload.data
@@ -110,11 +113,10 @@ const withFallback = async <T>(
   try {
     return await run()
   } catch (error) {
-    if (error instanceof ApiRequestError && error.allowFallback) {
-      setServerAvailable(false)
-      return fallback()
-    }
-    throw error
+    if (!(error instanceof ApiRequestError) || error.allowFallback !== true)
+      throw error
+    setServerAvailable(false)
+    return fallback()
   }
 }
 

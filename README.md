@@ -59,14 +59,32 @@ dist/
 
 ```bash
 LEGADO_DATABASE_URL=postgres://user:password@127.0.0.1:5432/database \
+  node scripts/serve.mjs --port 8080 --directory dist
+```
+
+当前服务器默认监听 `127.0.0.1:8080`，并尝试连接 `postgres://iaeno:iaeno@127.0.0.1:5432/cli_proxy`，自动创建 `legado_web` schema 及所需表。需要局域网或公网访问时再显式传入 `--host 0.0.0.0`，并建议放在可信网络或带鉴权的反向代理后；此时必须用 `LEGADO_ALLOWED_ORIGINS` 配置允许访问的公网 Origin，例如 `LEGADO_ALLOWED_ORIGINS=http://54.199.131.57:8080`。生产服务会拒绝跨站 API 请求和未授权 Host，书源搜索结果加入书架也会校验服务端签名；签名密钥默认是进程内随机值，也可用 `LEGADO_RESULT_SIGNING_SECRET` 固定配置，签名默认 30 分钟过期，可用 `LEGADO_RESULT_SIGNATURE_TTL_MS` 调整。重启后使用旧搜索结果入库失败时，请重新搜索后再加入书架。
+
+公网直连示例：
+
+```bash
+LEGADO_ALLOWED_ORIGINS=http://54.199.131.57:8080 \
   node scripts/serve.mjs --host 0.0.0.0 --port 8080 --directory dist
 ```
 
-当前服务器默认会尝试连接 `postgres://iaeno:iaeno@127.0.0.1:5432/cli_proxy`，并自动创建 `legado_web` schema 及所需表。只需要纯静态/浏览器本地降级模式时，可使用旧静态服务：
+只需要纯静态/浏览器本地降级模式时，可使用旧静态服务：
 
 ```bash
 python3 scripts/serve.py --host 0.0.0.0 --port 8080 --directory dist
 ```
+
+生产服务启动后可执行 smoke 验证：
+
+```bash
+pnpm smoke -- --base http://127.0.0.1:8080
+pnpm smoke:source -- --base http://127.0.0.1:8080 --keyword 三体
+```
+
+其中 `smoke:source` 会实际执行书源搜索、搜索结果加入书架、目录解析、首章正文解析/缓存、未签名搜索结果拒绝和订阅代理检查；依赖当前 PostgreSQL 中已有可搜索书源，以及目标站网络可达。如果 smoke 导入了新书，默认会在验证后删除；需要保留时可追加 `--keep-imported`。
 
 ## 兼容性
 

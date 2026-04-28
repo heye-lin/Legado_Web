@@ -240,9 +240,9 @@
           </el-button>
         </div>
         <div class="source-search-tip">
-          点击搜索结果卡片会在新标签页打开来源站详情；点击“加入书架”会通过生产服务解析目录并保存到书架。
-          纯静态/浏览器本地模式暂不支持书源结果入库；复杂 JS、登录、CookieJar
-          和反爬规则仍可能不支持。
+          点击搜索结果卡片会在新标签页打开来源站详情；点击“加入书架”会通过生产服务解析详情/目录并保存到书架，阅读章节时按需解析正文并缓存到
+          PostgreSQL。纯静态/浏览器本地模式不支持书源结果入库；复杂
+          JS、登录、CookieJar 和反爬规则仍不支持。
         </div>
       </div>
       <div v-if="showStandaloneEmptyState" class="empty-shelf-state">
@@ -429,11 +429,11 @@ const sourceSearchReportMeta: Record<
   SourceSearchReport['status'],
   { label: string; type: SourceSearchReportTagType }
 > = {
-  success: { label: '有结果', type: 'success' },
-  empty: { label: '无结果', type: 'info' },
-  failed: { label: '失败', type: 'danger' },
-  unsupported: { label: '不支持', type: 'warning' },
-  skipped: { label: '跳过', type: 'info' },
+  success: { label: '搜索成功', type: 'success' },
+  empty: { label: '请求成功无结果', type: 'info' },
+  failed: { label: '请求/解析失败', type: 'danger' },
+  unsupported: { label: '规则不支持', type: 'warning' },
+  skipped: { label: '已跳过', type: 'info' },
 }
 const sourceSearchReportStatusOrder: SourceSearchReport['status'][] = [
   'success',

@@ -76,6 +76,7 @@ export type SourceSearchBook = BaseBook & {
   latestChapterTitle?: string
   tocUrl: string
   resultKey: string
+  resultSig?: string
   resultIndex: number
   originOrder: number
   weight: number

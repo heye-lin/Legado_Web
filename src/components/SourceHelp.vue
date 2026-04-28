@@ -11,7 +11,7 @@ const isBookSource = computed(() =>
   <el-alert
     :title="
       isBookSource
-        ? '纯 Web 版支持保存书源，并提供受限书源搜索：生产服务会通过同源服务端接口抓取并解析搜索结果，不依赖浏览器 CORS；完整 Legado/Rhino JS、登录、CookieJar、目录/正文抓取暂不直接提供。'
+        ? '纯 Web 版支持保存书源，并提供受限书源搜索：生产服务会通过同源服务端接口抓取并解析搜索结果；可将结果加入书架，入库时解析详情/目录，阅读章节时按需解析正文并缓存到 PostgreSQL；复杂 Legado/Rhino JS、CookieJar、登录流程和反爬绕过仍不支持。'
         : '纯 Web 版支持保存订阅源，并可通过 URL 订阅导入书源或订阅源；书籍搜索需要在书源管理中导入可搜索书源。'
     "
     type="info"
@@ -25,7 +25,9 @@ const isBookSource = computed(() =>
       >.cover@data-src</code
     >
     这类 CSS 选择器 +
-    简单属性抽取；搜索结果目前会打开外部详情页，不会直接入库在线阅读。
+    简单属性抽取。生产服务下搜索结果可打开外部详情页，也可加入书架；服务端会解析常见
+    <code>ruleBookInfo</code>、<code>ruleToc</code>、<code>ruleContent</code>
+    规则，目录会随入库保存，正文会在阅读时按需解析并缓存到 PostgreSQL。
   </el-text>
   <el-text v-else>
     订阅源用于保存 RSS/订阅配置；如果订阅地址返回的是书源集合，点击

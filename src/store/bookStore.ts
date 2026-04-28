@@ -30,7 +30,6 @@ export const useBookStore = defineStore('book', {
         isSearchBook?: boolean
       },
       popCataVisible: false,
-      contentLoading: true,
       showContent: false,
       config: createDefaultReadConfig(),
       miniInterface: false,
@@ -166,9 +165,6 @@ export const useBookStore = defineStore('book', {
     },
     setPopCataVisible(visible: boolean) {
       this.popCataVisible = visible
-    },
-    setContentLoading(loading: boolean) {
-      this.contentLoading = loading
     },
     setReadingBook(readingBook: typeof this.readingBook) {
       this.readingBook = readingBook

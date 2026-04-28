@@ -22,6 +22,18 @@ const DEFAULT_DATABASE_URL =
   process.env.LEGADO_DATABASE_URL ??
   process.env.DATABASE_URL ??
   'postgres://iaeno:iaeno@127.0.0.1:5432/cli_proxy'
+const CONFIGURED_RESULT_SIGNING_SECRET =
+  process.env.LEGADO_RESULT_SIGNING_SECRET?.trim()
+const RESULT_SIGNING_SECRET =
+  CONFIGURED_RESULT_SIGNING_SECRET ||
+  crypto.randomBytes(32).toString('base64url')
+const RESULT_SIGNATURE_TTL_MS = Math.max(
+  60_000,
+  Math.min(
+    24 * 60 * 60 * 1000,
+    Number(process.env.LEGADO_RESULT_SIGNATURE_TTL_MS) || 30 * 60 * 1000,
+  ),
+)
 const SCHEMA = 'legado_web'
 const YIOVE_API_HOSTNAME = 'shuyuan-api.yiove.com'
 const YIOVE_SITE_ORIGIN = 'https://shuyuan.yiove.com'
@@ -44,6 +56,28 @@ const FORBIDDEN_PROXY_HEADER_PREFIXES = ['proxy-', 'sec-']
 const SOURCE_SEARCH_CONCURRENCY = 8
 const SOURCE_SEARCH_TIMEOUT_MS = 6_000
 const SOURCE_SEARCH_RESULT_LIMIT = 50
+const SOURCE_SEARCH_TOTAL_RESULT_LIMIT = 300
+const SEARCH_KEYWORD_MAX_LENGTH = 80
+const SOURCE_TOC_PAGE_LIMIT = Math.max(
+  1,
+  Math.min(50, Number(process.env.LEGADO_SOURCE_TOC_PAGE_LIMIT) || 10),
+)
+const SOURCE_CONTENT_PAGE_LIMIT = Math.max(
+  1,
+  Math.min(20, Number(process.env.LEGADO_SOURCE_CONTENT_PAGE_LIMIT) || 5),
+)
+const SOURCE_CHAPTER_LIMIT = Math.max(
+  1,
+  Math.min(20_000, Number(process.env.LEGADO_SOURCE_CHAPTER_LIMIT) || 5_000),
+)
+const SOURCE_CHAPTER_CONTENT_MAX_BYTES = Math.max(
+  64 * 1024,
+  Math.min(
+    5 * 1024 * 1024,
+    Number(process.env.LEGADO_SOURCE_CHAPTER_CONTENT_MAX_BYTES) ||
+      2 * 1024 * 1024,
+  ),
+)
 const COMPLEX_LEGADO_RULE_PATTERN =
   /(^\s*(js:|@js:|xpath:|@xpath:|regex:)|@js\b|<js>|java\.|source\.getVariable|source\.setVariable)/i
 const COMPLEX_SEARCH_URL_PATTERN =
@@ -97,9 +131,49 @@ const fail = (message, errorCode) => ({
 })
 const clone = value => JSON.parse(JSON.stringify(value))
 
+class ApiError extends Error {
+  constructor(status, message, errorCode) {
+    super(message)
+    this.name = 'ApiError'
+    this.status = status
+    this.errorCode = errorCode
+  }
+}
+
+class SourceParseError extends ApiError {
+  constructor(message) {
+    super(422, message, 'SOURCE_PARSE_FAILED')
+    this.name = 'SourceParseError'
+  }
+}
+
+const badRequest = message => new ApiError(400, message)
+
+const requireNonEmptyString = (value, label) => {
+  if (typeof value !== 'string' || value.trim() === '') {
+    throw badRequest(`${label}不能为空`)
+  }
+  return value.trim()
+}
+
+const requireQueryParam = (url, name, label = name) =>
+  requireNonEmptyString(url.searchParams.get(name) ?? '', label)
+
+const requireNonNegativeIntegerParam = (url, name, label = name) => {
+  const value = url.searchParams.get(name)
+  if (value === null || value.trim() === '') {
+    throw badRequest(`${label}不能为空`)
+  }
+  const number = Number(value)
+  if (!Number.isSafeInteger(number) || number < 0) {
+    throw badRequest(`${label}必须是非负整数`)
+  }
+  return number
+}
+
 const parseArgs = argv => {
   const args = {
-    host: '0.0.0.0',
+    host: '127.0.0.1',
     port: 8080,
     directory: 'dist',
     databaseUrl: DEFAULT_DATABASE_URL,
@@ -127,6 +201,48 @@ const parseArgs = argv => {
 const args = parseArgs(process.argv.slice(2))
 const rootDir = path.dirname(fileURLToPath(import.meta.url))
 const staticDir = path.resolve(rootDir, '..', args.directory)
+
+const normalizeApiOrigin = value => {
+  try {
+    const url = new URL(value)
+    if (url.protocol !== 'http:' && url.protocol !== 'https:') return ''
+    return url.origin
+  } catch {
+    return ''
+  }
+}
+
+const originFromHostAndPort = (host, port) => {
+  const trimmed = String(host ?? '').trim()
+  if (
+    !trimmed ||
+    trimmed === '0.0.0.0' ||
+    trimmed === '::' ||
+    trimmed === '[::]'
+  ) {
+    return ''
+  }
+  const hostPart = net.isIPv6(trimmed) ? `[${trimmed}]` : trimmed
+  return normalizeApiOrigin(`http://${hostPart}:${port}`)
+}
+
+const parseConfiguredApiOrigins = () =>
+  String(process.env.LEGADO_ALLOWED_ORIGINS ?? '')
+    .split(',')
+    .map(item => normalizeApiOrigin(item.trim()))
+    .filter(Boolean)
+
+const apiAllowedOrigins = new Set(
+  [
+    `http://127.0.0.1:${args.port}`,
+    `http://localhost:${args.port}`,
+    originFromHostAndPort(args.host, args.port),
+    ...parseConfiguredApiOrigins(),
+  ].filter(Boolean),
+)
+const apiAllowedHosts = new Set(
+  Array.from(apiAllowedOrigins, origin => new URL(origin).host.toLowerCase()),
+)
 const pool = new Pool({
   connectionString: args.databaseUrl,
   max: 8,
@@ -223,31 +339,67 @@ const readBody = (req, limit = MAX_JSON_BYTES) =>
 const readJsonBody = async req => {
   const body = await readBody(req)
   if (body.length === 0) return undefined
-  return JSON.parse(body.toString('utf8'))
+  const contentType = String(req.headers['content-type'] ?? '')
+    .split(';')[0]
+    .trim()
+    .toLowerCase()
+  if (contentType !== 'application/json') {
+    throw new ApiError(415, '请求 Content-Type 必须是 application/json')
+  }
+  try {
+    return JSON.parse(body.toString('utf8'))
+  } catch {
+    throw badRequest('请求体不是合法 JSON')
+  }
 }
 
 const isRecord = value =>
   typeof value === 'object' && value !== null && !Array.isArray(value)
 
+const requestHost = req => String(req.headers.host ?? '').trim().toLowerCase()
+
+const assertAllowedApiHost = req => {
+  const host = requestHost(req)
+  if (!host || !apiAllowedHosts.has(host)) {
+    throw new ApiError(403, 'API 请求 Host 不在允许列表中')
+  }
+}
+
+const assertSameOriginApiRequest = (req, url) => {
+  if (!url.pathname.startsWith('/api/')) return
+  assertAllowedApiHost(req)
+  const secFetchSite = String(req.headers['sec-fetch-site'] ?? '').toLowerCase()
+  if (secFetchSite === 'cross-site') {
+    throw new ApiError(403, '拒绝跨站 API 请求')
+  }
+
+  const origin = req.headers.origin
+  if (typeof origin !== 'string' || origin.trim() === '') return
+  const normalizedOrigin = normalizeApiOrigin(origin)
+  if (!normalizedOrigin || !apiAllowedOrigins.has(normalizedOrigin)) {
+    throw new ApiError(403, 'API 请求 Origin 不在允许列表中')
+  }
+}
+
 const requireKind = url => {
   const kind = url.searchParams.get('kind') ?? ''
   if (kind !== 'bookSource' && kind !== 'rssSource') {
-    throw new Error('kind 必须是 bookSource 或 rssSource')
+    throw badRequest('kind 必须是 bookSource 或 rssSource')
   }
   return kind
 }
 
 const sourceKey = (kind, source) => {
-  if (!isRecord(source)) throw new Error('源必须是对象')
+  if (!isRecord(source)) throw badRequest('源必须是对象')
   const key = kind === 'bookSource' ? source.bookSourceUrl : source.sourceUrl
   const name = kind === 'bookSource' ? source.bookSourceName : source.sourceName
   if (typeof key !== 'string' || key.trim() === '') {
-    throw new Error(
+    throw badRequest(
       kind === 'bookSource' ? '书源缺少 bookSourceUrl' : '订阅源缺少 sourceUrl',
     )
   }
   if (typeof name !== 'string' || name.trim() === '') {
-    throw new Error(
+    throw badRequest(
       kind === 'bookSource'
         ? '书源缺少 bookSourceName'
         : '订阅源缺少 sourceName',
@@ -494,7 +646,16 @@ const saveBookWithChapters = async (book, chapters) => {
 
 const getBooks = async () => {
   const result = await query(
-    `SELECT data FROM ${SCHEMA}.books ORDER BY COALESCE((data->>'durChapterTime')::bigint, 0) DESC`,
+    `
+      SELECT data
+      FROM ${SCHEMA}.books
+      ORDER BY
+        CASE
+          WHEN data->>'durChapterTime' ~ '^[0-9]+$'
+          THEN (data->>'durChapterTime')::bigint
+          ELSE 0
+        END DESC
+    `,
   )
   return result.rows.map(row => row.data)
 }
@@ -578,14 +739,63 @@ const sameBook = (book, progress) =>
     ? book.bookUrl === progress.bookUrl
     : book.name === progress.name && book.author === progress.author
 
+const normalizeProgressNumber = (value, label) => {
+  const number = Number(value)
+  if (!Number.isFinite(number) || number < 0) {
+    throw badRequest(`${label}必须是非负数字`)
+  }
+  return Math.floor(number)
+}
+
+const requireBookProgress = progress => {
+  if (!isRecord(progress)) throw badRequest('阅读进度必须是对象')
+  const bookUrl =
+    typeof progress.bookUrl === 'string' ? progress.bookUrl.trim() : ''
+  const name = typeof progress.name === 'string' ? progress.name.trim() : ''
+  const author =
+    typeof progress.author === 'string' ? progress.author.trim() : ''
+  if (!bookUrl && (!name || !author)) {
+    throw badRequest('阅读进度缺少 bookUrl 或 name/author')
+  }
+  return {
+    bookUrl,
+    name,
+    author,
+    durChapterIndex: normalizeProgressNumber(
+      progress.durChapterIndex ?? 0,
+      '章节序号',
+    ),
+    durChapterPos: normalizeProgressNumber(
+      progress.durChapterPos ?? 0,
+      '阅读位置',
+    ),
+    durChapterTime: normalizeProgressNumber(
+      progress.durChapterTime ?? Date.now(),
+      '阅读时间',
+    ),
+    durChapterTitle:
+      typeof progress.durChapterTitle === 'string'
+        ? progress.durChapterTitle.trim()
+        : '',
+  }
+}
+
 const saveBookProgress = async progress => {
+  const normalizedProgress = requireBookProgress(progress)
   const book =
-    progress.bookUrl?.length > 0
-      ? await getBook(progress.bookUrl)
-      : (await getBooks()).find(item => sameBook(item, progress))
+    normalizedProgress.bookUrl.length > 0
+      ? await getBook(normalizedProgress.bookUrl)
+      : (await getBooks()).find(item => sameBook(item, normalizedProgress))
   if (book === undefined) return '没有需要保存的 PG 进度'
 
-  const updated = { ...book, ...progress, syncTime: Date.now() }
+  const updated = {
+    ...book,
+    durChapterIndex: normalizedProgress.durChapterIndex,
+    durChapterPos: normalizedProgress.durChapterPos,
+    durChapterTime: normalizedProgress.durChapterTime,
+    durChapterTitle: normalizedProgress.durChapterTitle,
+    syncTime: Date.now(),
+  }
   await query(
     `UPDATE ${SCHEMA}.books SET data = $2::jsonb, updated_at = now() WHERE book_url = $1`,
     [updated.bookUrl, JSON.stringify(updated)],
@@ -679,10 +889,20 @@ const importBackup = async backup => {
 }
 
 const clearData = async () => {
-  await query(`DELETE FROM ${SCHEMA}.chapters`)
-  await query(`DELETE FROM ${SCHEMA}.books`)
-  await query(`DELETE FROM ${SCHEMA}.sources`)
-  await query(`DELETE FROM ${SCHEMA}.app_state`)
+  const client = await pool.connect()
+  try {
+    await client.query('BEGIN')
+    await client.query(`DELETE FROM ${SCHEMA}.chapters`)
+    await client.query(`DELETE FROM ${SCHEMA}.books`)
+    await client.query(`DELETE FROM ${SCHEMA}.sources`)
+    await client.query(`DELETE FROM ${SCHEMA}.app_state`)
+    await client.query('COMMIT')
+  } catch (error) {
+    await client.query('ROLLBACK').catch(() => undefined)
+    throw error
+  } finally {
+    client.release()
+  }
 }
 
 const isIpv4InRange = (parts, start, end) => {
@@ -691,7 +911,7 @@ const isIpv4InRange = (parts, start, end) => {
   return value >= start && value <= end
 }
 
-const isPrivateIp = ip => {
+const isForbiddenRemoteAddress = ip => {
   if (net.isIPv4(ip)) {
     const parts = ip.split('.').map(Number)
     return (
@@ -714,34 +934,81 @@ const isPrivateIp = ip => {
   if (net.isIPv6(ip)) {
     const lowerIp = ip.toLowerCase()
     if (lowerIp.startsWith('::ffff:')) {
-      return isPrivateIp(lowerIp.slice(7))
+      const mappedIp = lowerIp.slice(7)
+      return net.isIP(mappedIp) ? isForbiddenRemoteAddress(mappedIp) : true
     }
+    const firstHextet = Number.parseInt(lowerIp.split(':')[0] || '0', 16)
+    const secondHextet = Number.parseInt(lowerIp.split(':')[1] || '0', 16)
     return (
       lowerIp === '::' ||
       lowerIp === '::1' ||
       lowerIp.startsWith('fc') ||
       lowerIp.startsWith('fd') ||
-      lowerIp.startsWith('fe80:') ||
+      (Number.isFinite(firstHextet) && (firstHextet & 0xffc0) === 0xfe80) ||
       lowerIp.startsWith('ff') ||
-      lowerIp.startsWith('2001:db8:')
+      (firstHextet === 0x64 &&
+        (secondHextet === 0xff9b || secondHextet === 0xff9b1)) ||
+      (firstHextet === 0x100 && secondHextet === 0) ||
+      firstHextet === 0x2002 ||
+      (firstHextet === 0x2001 &&
+        ((Number.isFinite(secondHextet) && secondHextet <= 0x01ff) ||
+          secondHextet === 0x02 ||
+          secondHextet === 0xdb8 ||
+          (secondHextet >= 0x20 && secondHextet <= 0x2f)))
     )
   }
   return true
 }
 
+const lookupHostname = hostname => String(hostname ?? '').replace(/^\[|\]$/g, '')
+
 const validatePublicUrl = async (rawUrl, label = '远程地址') => {
-  const parsed = new URL(rawUrl)
-  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+  let url
+  try {
+    url = new URL(rawUrl)
+  } catch {
+    throw badRequest(`${label}必须是有效 URL`)
+  }
+  if (url.protocol !== 'http:' && url.protocol !== 'https:') {
     throw new Error(`${label}必须是 http/https URL`)
   }
-  const addresses = await dns.lookup(parsed.hostname, { all: true })
+  const hostname = lookupHostname(url.hostname)
+  const hostnameFamily = net.isIP(hostname)
+  const addresses =
+    hostnameFamily === 0
+      ? await dns.lookup(hostname, { all: true })
+      : [{ address: hostname, family: hostnameFamily }]
   if (
     addresses.length === 0 ||
-    addresses.some(address => isPrivateIp(address.address))
+    addresses.some(address => isForbiddenRemoteAddress(address.address))
   ) {
     throw new Error(`${label}域名不是公网地址`)
   }
-  return parsed
+  return { url, addresses }
+}
+
+const createValidatedLookup = addresses => (hostname, options, callback) => {
+  const family =
+    options.family === 4 || options.family === 6 ? options.family : undefined
+  const allowed = addresses.filter(
+    address => family === undefined || address.family === family,
+  )
+  const selected = allowed[0]
+  if (selected === undefined) {
+    callback(new Error(`远程地址 ${hostname} 没有可用的公网解析地址`))
+    return
+  }
+  if (options.all) {
+    callback(
+      null,
+      allowed.map(address => ({
+        address: address.address,
+        family: address.family,
+      })),
+    )
+    return
+  }
+  callback(null, selected.address, selected.family)
 }
 
 const isForbiddenProxyHeader = (name, { allowOriginReferer = false } = {}) => {
@@ -806,11 +1073,13 @@ const decodeResponseContent = (content, contentEncoding, limit) => {
     encoding.includes('gzip') ||
     (content[0] === GZIP_MAGIC_0 && content[1] === GZIP_MAGIC_1)
   ) {
-    decoded = zlib.gunzipSync(content)
+    decoded = zlib.gunzipSync(content, { maxOutputLength: limit + 1 })
   } else if (encoding.includes('br')) {
-    decoded = zlib.brotliDecompressSync(content)
+    decoded = zlib.brotliDecompressSync(content, {
+      maxOutputLength: limit + 1,
+    })
   } else if (encoding.includes('deflate')) {
-    decoded = zlib.inflateSync(content)
+    decoded = zlib.inflateSync(content, { maxOutputLength: limit + 1 })
   }
 
   if (decoded.byteLength > limit) {
@@ -867,7 +1136,7 @@ const requestBytes = async (
     urlLabel = '远程地址',
   } = {},
 ) => {
-  const url = await validatePublicUrl(rawUrl, urlLabel)
+  const { url, addresses } = await validatePublicUrl(rawUrl, urlLabel)
   const bodyBuffer = encodeRequestBody(body)
   const requestHeaders = { ...headers }
   if (
@@ -880,7 +1149,13 @@ const requestBytes = async (
     const client = url.protocol === 'https:' ? https : http
     const request = client.request(
       url,
-      { method, headers: requestHeaders, timeout },
+      {
+        method,
+        headers: requestHeaders,
+        timeout,
+        lookup: createValidatedLookup(addresses),
+        servername: url.hostname,
+      },
       async response => {
         const statusCode = response.statusCode ?? 0
         if (
@@ -989,6 +1264,55 @@ const sourceSearchReport = (source, status, message, count = 0) => ({
   count,
   message,
 })
+
+const sourceSearchSignatureFields = book => [
+  book.entryType,
+  book.sourceUrl,
+  book.bookUrl,
+  book.tocUrl,
+  book.name,
+  book.author,
+  book.coverUrl,
+  book.intro,
+  book.latestChapterTitle,
+  book.kind,
+  book.wordCount,
+  book.searchedAt,
+]
+
+const signSourceSearchBookFields = book =>
+  crypto
+    .createHmac('sha256', RESULT_SIGNING_SECRET)
+    .update(sourceSearchSignatureFields(book).map(String).join('\0'))
+    .digest('base64url')
+
+const attachSourceSearchBookSignature = book => ({
+  ...book,
+  resultSig: signSourceSearchBookFields(book),
+})
+
+const verifySourceSearchBookSignature = book => {
+  const searchedAt = Number(book.searchedAt)
+  if (!Number.isSafeInteger(searchedAt) || searchedAt <= 0) {
+    throw badRequest('搜索结果缺少有效时间戳，请重新搜索后再加入书架')
+  }
+  if (Date.now() - searchedAt > RESULT_SIGNATURE_TTL_MS) {
+    throw badRequest('搜索结果已过期，请重新搜索后再加入书架')
+  }
+  if (typeof book.resultSig !== 'string' || book.resultSig.trim() === '') {
+    throw badRequest('加入书架请求缺少搜索结果签名，请重新搜索后再加入书架')
+  }
+  const expected = signSourceSearchBookFields(book)
+  const actual = book.resultSig.trim()
+  const expectedBuffer = Buffer.from(expected)
+  const actualBuffer = Buffer.from(actual)
+  if (
+    expectedBuffer.length !== actualBuffer.length ||
+    !crypto.timingSafeEqual(expectedBuffer, actualBuffer)
+  ) {
+    throw badRequest('搜索结果签名无效，请重新搜索后再加入书架')
+  }
+}
 
 const normalizeHeaderToken = value =>
   value
@@ -1241,10 +1565,16 @@ const parseRule = rule => {
 }
 
 const replaceRuleText = (value, pattern, replacement) => {
+  const safePattern = String(pattern ?? '')
+  if (!safePattern) return value
+  if (safePattern.length > 512) return value.split(safePattern).join(replacement)
+  if (/\([^)]*[+*][^)]*\)[+*{]/.test(safePattern)) {
+    return value.split(safePattern).join(replacement)
+  }
   try {
-    return value.replace(new RegExp(pattern, 'g'), replacement)
+    return value.replace(new RegExp(safePattern, 'g'), replacement)
   } catch {
-    return value.split(pattern).join(replacement)
+    return value.split(safePattern).join(replacement)
   }
 }
 
@@ -1795,7 +2125,7 @@ const buildSourceSearchBook = ($, source, node, baseUrl, index) => {
     baseUrl,
   )
   const now = Date.now()
-  return {
+  return attachSourceSearchBookSignature({
     entryType: 'source-search',
     name,
     author: readOptionalRuleValue($, scope, rule.author, baseUrl),
@@ -1819,7 +2149,7 @@ const buildSourceSearchBook = ($, source, node, baseUrl, index) => {
     weight: source.weight,
     searchedAt: now,
     time: now,
-  }
+  })
 }
 
 const buildJsonSourceSearchBook = (source, item, baseUrl, index) => {
@@ -1835,7 +2165,7 @@ const buildJsonSourceSearchBook = (source, item, baseUrl, index) => {
     baseUrl,
   )
   const now = Date.now()
-  return {
+  return attachSourceSearchBookSignature({
     entryType: 'source-search',
     name,
     author: readJsonRuleValue(item, rule.author),
@@ -1857,7 +2187,7 @@ const buildJsonSourceSearchBook = (source, item, baseUrl, index) => {
     weight: source.weight,
     searchedAt: now,
     time: now,
-  }
+  })
 }
 
 const appendWarnings = (message, warnings) => {
@@ -2108,6 +2438,9 @@ const compareBookSources = (left, right) =>
 const searchBookSources = async keyword => {
   const searchKey = keyword.trim()
   if (!searchKey) return { books: [], reports: [] }
+  if (searchKey.length > SEARCH_KEYWORD_MAX_LENGTH) {
+    throw badRequest(`搜索关键词不能超过 ${SEARCH_KEYWORD_MAX_LENGTH} 个字符`)
+  }
 
   const sources = (await getSources('bookSource')).sort(compareBookSources)
   const results = await mapWithConcurrency(
@@ -2117,16 +2450,30 @@ const searchBookSources = async keyword => {
   )
   const bookMap = new Map()
   const reports = []
+  let truncatedCount = 0
   results.forEach(result => {
     reports.push(result.report)
-    result.books.forEach(book => bookMap.set(book.resultKey, book))
+    result.books.forEach(book => {
+      if (bookMap.has(book.resultKey)) return
+      if (bookMap.size >= SOURCE_SEARCH_TOTAL_RESULT_LIMIT) {
+        truncatedCount += 1
+        return
+      }
+      bookMap.set(book.resultKey, book)
+    })
   })
+  if (truncatedCount > 0) {
+    reports.push({
+      sourceName: '系统',
+      sourceUrl: '',
+      status: 'skipped',
+      count: truncatedCount,
+      message: `搜索结果已限制为 ${SOURCE_SEARCH_TOTAL_RESULT_LIMIT} 条，另有 ${truncatedCount} 条未返回`,
+    })
+  }
 
   return { books: Array.from(bookMap.values()), reports }
 }
-
-const SOURCE_TOC_PAGE_LIMIT = 10
-const SOURCE_CONTENT_PAGE_LIMIT = 5
 
 const isSourceSearchBookPayload = value =>
   isRecord(value) &&
@@ -2137,11 +2484,20 @@ const isSourceSearchBookPayload = value =>
 
 const requireSourceSearchBook = value => {
   if (!isSourceSearchBookPayload(value)) {
-    throw new Error('加入书架请求缺少有效的书源搜索结果')
+    throw badRequest('加入书架请求缺少有效的书源搜索结果')
   }
+  verifySourceSearchBookSignature(value)
+  const name = requireNonEmptyString(value.name, '书名')
+  const sourceUrl = resolveHttpUrl(value.sourceUrl, value.sourceUrl)
+  if (!sourceUrl) throw badRequest('书源地址必须是 http/https URL')
   const bookUrl = resolveHttpUrl(value.bookUrl, value.sourceUrl)
-  if (!bookUrl) throw new Error('书籍详情地址必须是 http/https URL')
-  return { ...value, bookUrl }
+  if (!bookUrl) throw badRequest('书籍详情地址必须是 http/https URL')
+  const tocUrl =
+    value.tocUrl === undefined || value.tocUrl === ''
+      ? value.tocUrl
+      : resolveHttpUrl(value.tocUrl, bookUrl)
+  if (value.tocUrl && !tocUrl) throw badRequest('目录地址必须是 http/https URL')
+  return { ...value, name, sourceUrl, bookUrl, tocUrl }
 }
 
 const normalizedSourceUrlEquals = (left, right) => {
@@ -2224,7 +2580,7 @@ const sourceRuntimeNotes = source => {
 
 const fetchSourcePageText = async (source, rawUrl, label) => {
   const url = resolveHttpUrl(rawUrl, source.bookSourceUrl)
-  if (!url) throw new Error(`${label}必须是 http/https URL`)
+  if (!url) throw new SourceParseError(`${label}必须是 http/https URL`)
 
   const { headers, warnings } = parseSourceHeaders(source.header, {
     allowOriginReferer: true,
@@ -2247,7 +2603,7 @@ const fetchSourcePageText = async (source, rawUrl, label) => {
       warnings,
     }
   } catch (error) {
-    throw new Error(
+    throw new SourceParseError(
       appendWarnings(
         `${label}抓取失败：${error instanceof Error ? error.message : String(error)}`,
         warnings.concat(sourceRuntimeNotes(source)),
@@ -2256,45 +2612,174 @@ const fetchSourcePageText = async (source, rawUrl, label) => {
   }
 }
 
+const decodeStaticJsString = value =>
+  String(value ?? '')
+    .replace(/\\\//g, '/')
+    .replace(/\\(["'\\])/g, '$1')
+    .replace(/\\n/g, '\n')
+    .replace(/\\r/g, '\r')
+    .replace(/\\t/g, '\t')
+
 const parseStaticObjectParams = objectText => {
   const params = new URLSearchParams()
   for (const match of objectText.matchAll(
-    /['"]?([A-Za-z_$][\w$-]*)['"]?\s*:\s*(['"])(.*?)\2/g,
+    /['"]?([A-Za-z_$][\w$-]*)['"]?\s*:\s*(?:(['"])((?:\\.|(?!\2)[\s\S])*?)\2|(-?\d+(?:\.\d+)?)\b|(true|false|null)\b)/g,
   )) {
-    params.set(
-      match[1],
-      match[3]
-        .replace(/\\\//g, '/')
-        .replace(/\\(["'\\])/g, '$1')
-        .replace(/\\n/g, '\n')
-        .replace(/\\r/g, '\r'),
-    )
+    const value =
+      match[3] !== undefined
+        ? decodeStaticJsString(match[3])
+        : match[4] !== undefined
+          ? match[4]
+          : match[5] === 'null'
+            ? ''
+            : match[5]
+    params.set(match[1], value)
   }
   return params
 }
 
+const serializeStaticJqueryBody = (dataText, contentType) => {
+  const trimmed = dataText.trim()
+  if (trimmed.startsWith('{')) {
+    const params = parseStaticObjectParams(trimmed)
+    if (Array.from(params.keys()).length === 0) return undefined
+    if (/application\/json/i.test(contentType ?? '')) {
+      return JSON.stringify(Object.fromEntries(params.entries()))
+    }
+    return params.toString()
+  }
+  const stringMatch = trimmed.match(/^(['"])((?:\\.|(?!\1)[\s\S])*)\1$/)
+  return stringMatch === null ? undefined : decodeStaticJsString(stringMatch[2])
+}
+
+const buildStaticJqueryRequest = ({
+  rawUrl,
+  rawData,
+  baseUrl,
+  method = 'POST',
+  contentType = 'application/x-www-form-urlencoded; charset=UTF-8',
+}) => {
+  const resolvedUrl = resolveHttpUrl(rawUrl, baseUrl)
+  const body = serializeStaticJqueryBody(rawData, contentType)
+  if (!resolvedUrl || body === undefined) return undefined
+  const normalizedMethod = method.toUpperCase() === 'GET' ? 'GET' : 'POST'
+  if (normalizedMethod === 'GET') {
+    const url = new URL(resolvedUrl)
+    const params = new URLSearchParams(body)
+    params.forEach((value, key) => url.searchParams.set(key, value))
+    return { url: url.toString(), method: 'GET' }
+  }
+  return { url: resolvedUrl, method: normalizedMethod, body, contentType }
+}
+
 const findStaticJqueryContentRequest = (text, baseUrl) => {
-  const contentAccessorPattern = String.raw`(?:[A-Za-z_$][\w$]*\s*(?:\[\s*['"]content['"]\s*\]|\.\s*content))`
+  const contentAccessorPattern = String.raw`(?:[A-Za-z_$][\w$]*(?:\s*(?:\.\s*[A-Za-z_$][\w$]*|\[\s*['"][^'"]+['"]\s*\]))*\s*(?:\[\s*['"]content['"]\s*\]|\.\s*content))`
   const postMatch = text.match(
     new RegExp(
-      String.raw`\$\.post\(\s*(['"])(.*?)\1\s*,\s*(\{[\s\S]*?\})\s*,[\s\S]{0,2000}?${contentAccessorPattern}[\s\S]{0,2000}?['"]json['"]\s*\)`,
+      String.raw`\$\.post\(\s*(['"])(.*?)\1\s*,\s*(\{[\s\S]*?\}|(['"])(?:\\.|(?!\4)[\s\S])*?\4)\s*,[\s\S]{0,2000}?${contentAccessorPattern}[\s\S]{0,2000}?(?:['"]json['"])?\s*\)`,
       'i',
     ),
   )
-  const match =
-    postMatch ??
-    text.match(
-      new RegExp(
-        String.raw`\$\.ajax\(\s*\{[\s\S]*?url\s*:\s*(['"])(.*?)\1[\s\S]*?data\s*:\s*(\{[\s\S]*?\})[\s\S]*?${contentAccessorPattern}`,
-        'i',
-      ),
-    )
-  if (match === null) return undefined
+  if (postMatch !== null) {
+    return buildStaticJqueryRequest({
+      rawUrl: postMatch[2],
+      rawData: postMatch[3],
+      baseUrl,
+    })
+  }
 
-  const url = resolveHttpUrl(match[2], baseUrl)
-  const body = parseStaticObjectParams(match[3])
-  if (!url || Array.from(body.keys()).length === 0) return undefined
-  return { url, body: body.toString() }
+  const ajaxMatch = text.match(
+    new RegExp(
+      String.raw`\$\.ajax\(\s*\{[\s\S]*?url\s*:\s*(['"])(.*?)\1[\s\S]*?data\s*:\s*(\{[\s\S]*?\}|(['"])(?:\\.|(?!\4)[\s\S])*?\4)[\s\S]*?${contentAccessorPattern}`,
+      'i',
+    ),
+  )
+  if (ajaxMatch === null) return undefined
+  const method =
+    ajaxMatch[0].match(/(?:type|method)\s*:\s*(['"])(GET|POST)\1/i)?.[2] ??
+    'POST'
+  const contentType =
+    ajaxMatch[0].match(/contentType\s*:\s*(['"])(.*?)\1/i)?.[2] ??
+    'application/x-www-form-urlencoded; charset=UTF-8'
+  return buildStaticJqueryRequest({
+    rawUrl: ajaxMatch[2],
+    rawData: ajaxMatch[3],
+    baseUrl,
+    method,
+    contentType,
+  })
+}
+
+const DYNAMIC_CONTENT_TEXT_KEYS = [
+  'content',
+  'chapterContent',
+  'chapter_content',
+  'html',
+  'text',
+  'body',
+]
+const DYNAMIC_CONTENT_CONTAINER_KEYS = [
+  'data',
+  'ret_data',
+  'chapter',
+  'book',
+  'result',
+]
+const DYNAMIC_CONTENT_SUCCESS_STRINGS = new Set([
+  '0',
+  '1',
+  '200',
+  'ok',
+  'success',
+])
+
+const dynamicPayloadLooksFailed = value => {
+  if (!isRecord(value)) return false
+  if (value.success === false || value.ok === false) return true
+  const status = value.code ?? value.status ?? value.errno
+  if (status === true) return false
+  if (status === false) return true
+  if (status === undefined || status === null || status === '') return false
+  const normalized = String(status).toLowerCase()
+  return !DYNAMIC_CONTENT_SUCCESS_STRINGS.has(normalized)
+}
+
+const looksLikeDynamicErrorText = value =>
+  /(请登录|登录后|访问过于频繁|频繁访问|验证码|验证失败|无权限|禁止访问|错误|失败|异常|not\s+found|forbidden|unauthorized)/i.test(
+    String(value ?? ''),
+  )
+
+const findContentTextInPayload = (value, depth = 0) => {
+  if (depth > 4 || value === undefined || value === null) return ''
+  if (typeof value === 'string') {
+    return looksLikeDynamicErrorText(value) ? '' : value
+  }
+  if (typeof value === 'number' || typeof value === 'boolean') return ''
+  if (Array.isArray(value)) {
+    return value
+      .map(item => findContentTextInPayload(item, depth + 1))
+      .find(Boolean)
+  }
+  if (!isRecord(value)) return ''
+  if (dynamicPayloadLooksFailed(value)) return ''
+
+  for (const key of DYNAMIC_CONTENT_TEXT_KEYS) {
+    const content = findContentTextInPayload(value[key], depth + 1)
+    if (content) return content
+  }
+
+  const resultText =
+    typeof value.result === 'string' && value.result.length > 20
+      ? findContentTextInPayload(value.result, depth + 1)
+      : ''
+  if (resultText) return resultText
+
+  for (const key of DYNAMIC_CONTENT_CONTAINER_KEYS) {
+    if (typeof value[key] === 'string') continue
+    const content = findContentTextInPayload(value[key], depth + 1)
+    if (content) return content
+  }
+  return ''
 }
 
 const fetchStaticJqueryContent = async (
@@ -2308,14 +2793,14 @@ const fetchStaticJqueryContent = async (
     allowOriginReferer: true,
   })
   headers.Accept = 'application/json, text/javascript, */*; q=0.01'
-  headers['Content-Type'] = 'application/x-www-form-urlencoded; charset=UTF-8'
+  if (request.contentType) headers['Content-Type'] = request.contentType
   headers['X-Requested-With'] = 'XMLHttpRequest'
   headers.Referer = page.finalUrl
   headers.Origin = new URL(page.finalUrl).origin
 
   try {
     const response = await requestBytes(request.url, {
-      method: 'POST',
+      method: request.method ?? 'POST',
       headers: normalizeProxyHeaders(headers, { allowOriginReferer: true }),
       body: request.body,
       timeout: SOURCE_FETCH_TIMEOUT_MS,
@@ -2327,7 +2812,7 @@ const fetchStaticJqueryContent = async (
       source.charset ?? source.bookSourceCharset ?? source.bookSourceEncoding,
     )
     const payload = JSON.parse(text)
-    return normalizeRuleText(isRecord(payload) ? payload.content : '')
+    return normalizeRuleText(findContentTextInPayload(payload))
   } catch (error) {
     throw new Error(
       appendWarnings(
@@ -2388,7 +2873,7 @@ const sourcePageNotes = (source, page) =>
   ])
 
 const wrapSourcePageParseError = (source, page, stage, error) =>
-  new Error(
+  new SourceParseError(
     appendWarnings(
       `${stage}解析失败：${getErrorMessage(error)}`,
       sourcePageNotes(source, page),
@@ -2406,6 +2891,9 @@ const readOptionalCriticalSourceRuleValue = (
   if (!rule?.trim()) return ''
   assertSupportedRule(rule, label)
   try {
+    if (jsonData !== undefined && !isJsonReadableRule(rule)) {
+      throw new Error('JSON 页面规则必须使用 JSONPath、JSON accessor 或模板')
+    }
     return jsonData !== undefined && isJsonReadableRule(rule)
       ? readJsonRuleValue(jsonData, rule)
       : readRuleValue($, scope, rule, baseUrl)
@@ -2423,6 +2911,11 @@ const readRequiredSourceRuleValue = (
   label,
 ) => {
   assertSupportedRule(rule, label)
+  if (jsonData !== undefined && !isJsonReadableRule(rule)) {
+    throw new Error(
+      `规则「${rule}」解析失败：JSON 页面规则必须使用 JSONPath、JSON accessor 或模板`,
+    )
+  }
   const value =
     jsonData !== undefined && isJsonReadableRule(rule)
       ? readJsonRuleValue(jsonData, rule)
@@ -2508,7 +3001,7 @@ const buildSourceChapterRecord = ({
   content: '',
 })
 
-const parseHtmlSourceTocPage = (source, bookUrl, page) => {
+const parseHtmlSourceTocPage = (source, page) => {
   const rule = source.ruleToc ?? {}
   const $ = cheerio.load(page.text)
   const nodes = selectBookListNodes($, rule.chapterList)
@@ -2592,7 +3085,7 @@ const parseHtmlSourceTocPage = (source, bookUrl, page) => {
   return { chapters, nextTocUrl }
 }
 
-const parseJsonSourceTocPage = (source, bookUrl, page, jsonData) => {
+const parseJsonSourceTocPage = (source, page, jsonData) => {
   const rule = source.ruleToc ?? {}
   const items = readJsonPathUnionValues(jsonData, rule.chapterList, {
     flattenTerminalArrays: true,
@@ -2676,7 +3169,7 @@ const parseJsonSourceTocPage = (source, bookUrl, page, jsonData) => {
   return { chapters, nextTocUrl }
 }
 
-const parseSourceTocPage = (source, bookUrl, page) => {
+const parseSourceTocPage = (source, page) => {
   const rule = source.ruleToc ?? {}
   if (!rule.chapterList?.trim()) throw new Error('书源未配置目录列表规则')
   if (!rule.chapterName?.trim()) throw new Error('书源未配置章节名称规则')
@@ -2689,8 +3182,8 @@ const parseSourceTocPage = (source, bookUrl, page) => {
     ? parseJsonSearchResponse(page.text)
     : undefined
   return jsonData === undefined
-    ? parseHtmlSourceTocPage(source, bookUrl, page)
-    : parseJsonSourceTocPage(source, bookUrl, page, jsonData)
+    ? parseHtmlSourceTocPage(source, page)
+    : parseJsonSourceTocPage(source, page, jsonData)
 }
 
 const parseSourceBookChapters = async (source, bookUrl, tocUrl) => {
@@ -2701,7 +3194,8 @@ const parseSourceBookChapters = async (source, bookUrl, tocUrl) => {
   let pageIndex = 0
 
   while (nextTocUrl) {
-    if (seenTocUrls.has(nextTocUrl)) {
+    const nextTocKey = normalizeComparableHttpUrl(nextTocUrl)
+    if (seenTocUrls.has(nextTocKey)) {
       throw new Error(`目录下一页出现循环：${nextTocUrl}`)
     }
     if (pageIndex >= SOURCE_TOC_PAGE_LIMIT) {
@@ -2709,17 +3203,22 @@ const parseSourceBookChapters = async (source, bookUrl, tocUrl) => {
         `目录分页超过 ${SOURCE_TOC_PAGE_LIMIT} 页，已停止，未写入书架`,
       )
     }
-    seenTocUrls.add(nextTocUrl)
+    seenTocUrls.add(nextTocKey)
 
     const page = await fetchSourcePageText(source, nextTocUrl, '目录地址')
     let parsed
     try {
-      parsed = parseSourceTocPage(source, bookUrl, page)
+      parsed = parseSourceTocPage(source, page)
     } catch (error) {
       throw wrapSourcePageParseError(source, page, '目录', error)
     }
-    parsed.chapters.forEach(chapter => {
-      if (seenChapterUrls.has(chapter.chapterUrl)) return
+    for (const chapter of parsed.chapters) {
+      if (seenChapterUrls.has(chapter.chapterUrl)) continue
+      if (chapters.length >= SOURCE_CHAPTER_LIMIT) {
+        throw new Error(
+          `目录章节数超过 ${SOURCE_CHAPTER_LIMIT} 章，已停止，未写入书架`,
+        )
+      }
       seenChapterUrls.add(chapter.chapterUrl)
       chapters.push(
         buildSourceChapterRecord({
@@ -2729,7 +3228,7 @@ const parseSourceBookChapters = async (source, bookUrl, tocUrl) => {
           index: chapters.length,
         }),
       )
-    })
+    }
     nextTocUrl = parsed.nextTocUrl
     pageIndex += 1
   }
@@ -2809,6 +3308,56 @@ const importSourceBook = async payload => {
   return { book, chapterCount: chapters.length, alreadyOnShelf: false }
 }
 
+const CONTENT_TAG_ALLOWLIST = new Set([
+  'a',
+  'b',
+  'blockquote',
+  'br',
+  'code',
+  'div',
+  'em',
+  'h1',
+  'h2',
+  'h3',
+  'h4',
+  'h5',
+  'h6',
+  'hr',
+  'i',
+  'img',
+  'li',
+  'ol',
+  'p',
+  'pre',
+  'span',
+  'strong',
+  'table',
+  'tbody',
+  'td',
+  'th',
+  'thead',
+  'tr',
+  'u',
+  'ul',
+])
+const CONTENT_ATTR_ALLOWLIST = {
+  a: new Set(['href', 'title']),
+  img: new Set(['alt', 'src', 'title']),
+}
+
+const resolvedSafeContentUrl = (value, baseUrl) => {
+  const resolved = resolveHttpUrl(value, baseUrl)
+  if (!resolved) return ''
+  try {
+    const url = new URL(resolved)
+    return url.protocol === 'http:' || url.protocol === 'https:'
+      ? url.toString()
+      : ''
+  } catch {
+    return ''
+  }
+}
+
 const sanitizeContentHtml = (html, baseUrl) => {
   const $ = cheerio.load(`<main id="legado-content-root">${html}</main>`)
   const root = $('#legado-content-root')
@@ -2818,24 +3367,28 @@ const sanitizeContentHtml = (html, baseUrl) => {
     )
     .remove()
   root.find('*').each((_, node) => {
+    const tagName = String(node.name ?? '').toLocaleLowerCase()
+    if (!CONTENT_TAG_ALLOWLIST.has(tagName)) {
+      $(node).replaceWith($(node).contents())
+      return
+    }
+    const allowedAttributes = CONTENT_ATTR_ALLOWLIST[tagName] ?? new Set()
     Object.keys(node.attribs ?? {}).forEach(attribute => {
       const lowerAttribute = attribute.toLocaleLowerCase()
       const value = node.attribs[attribute]
-      if (lowerAttribute.startsWith('on')) {
+      if (lowerAttribute.startsWith('on') || !allowedAttributes.has(lowerAttribute)) {
         $(node).removeAttr(attribute)
         return
       }
       if (lowerAttribute !== 'src' && lowerAttribute !== 'href') return
-      if (/^\s*javascript:/i.test(value)) {
-        $(node).removeAttr(attribute)
-        return
-      }
-      const resolved =
-        lowerAttribute === 'src'
-          ? resolveImageUrl(value, baseUrl)
-          : resolveHttpUrl(value, baseUrl)
+      const resolved = resolvedSafeContentUrl(value, baseUrl)
       if (resolved) $(node).attr(attribute, resolved)
+      else $(node).removeAttr(attribute)
     })
+    if (tagName === 'a' && $(node).attr('href')) {
+      $(node).attr('target', '_blank')
+      $(node).attr('rel', 'noopener noreferrer')
+    }
   })
   return root.html()?.trim() ?? ''
 }
@@ -2981,6 +3534,11 @@ const readContentRuleValue = ($, scope, rule, baseUrl) => {
 
 const readRequiredContentRuleValue = ($, scope, jsonData, rule, baseUrl) => {
   assertSupportedRule(rule, '正文解析')
+  if (jsonData !== undefined && !isJsonReadableRule(rule)) {
+    throw new Error(
+      `规则「${rule}」解析失败：JSON 页面规则必须使用 JSONPath、JSON accessor 或模板`,
+    )
+  }
   return (
     jsonData !== undefined && isJsonReadableRule(rule)
       ? readJsonRuleValue(jsonData, rule)
@@ -3059,9 +3617,11 @@ const parseSourceChapterContent = async (book, chapter) => {
   const seenUrls = new Set()
   let nextUrl = chapter.url
   let pageIndex = 0
+  let contentBytes = 0
 
   while (nextUrl) {
-    if (seenUrls.has(nextUrl)) {
+    const nextUrlKey = normalizeComparableHttpUrl(nextUrl)
+    if (seenUrls.has(nextUrlKey)) {
       throw new Error(`正文下一页出现循环：${nextUrl}`)
     }
     if (pageIndex >= SOURCE_CONTENT_PAGE_LIMIT) {
@@ -3069,13 +3629,19 @@ const parseSourceChapterContent = async (book, chapter) => {
         `章节正文分页超过 ${SOURCE_CONTENT_PAGE_LIMIT} 页，未缓存不完整正文`,
       )
     }
-    seenUrls.add(nextUrl)
+    seenUrls.add(nextUrlKey)
     const page = await fetchSourcePageText(source, nextUrl, '章节地址')
     let parsed
     try {
       parsed = await parseSourceContentPage(source, page)
     } catch (error) {
       throw wrapSourcePageParseError(source, page, '正文', error)
+    }
+    contentBytes += Buffer.byteLength(parsed.content, 'utf8')
+    if (contentBytes > SOURCE_CHAPTER_CONTENT_MAX_BYTES) {
+      throw new Error(
+        `章节正文超过 ${SOURCE_CHAPTER_CONTENT_MAX_BYTES} 字节，未缓存异常正文`,
+      )
     }
     contents.push(parsed.content)
     nextUrl =
@@ -3091,18 +3657,23 @@ const parseSourceChapterContent = async (book, chapter) => {
 }
 
 const fetchSubscriptionJson = async rawUrl => {
-  const url = await validatePublicUrl(rawUrl, '订阅地址')
+  let url
+  try {
+    url = new URL(rawUrl)
+  } catch {
+    url = undefined
+  }
   const headers = {
     Accept: 'application/json, text/plain;q=0.9, */*;q=0.8',
     'User-Agent':
       'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/122 Safari/537.36',
   }
-  if (url.hostname === YIOVE_API_HOSTNAME) {
+  if (url?.hostname === YIOVE_API_HOSTNAME) {
     headers.Origin = YIOVE_SITE_ORIGIN
     headers.Referer = `${YIOVE_SITE_ORIGIN}/`
   }
 
-  const { content } = await requestBytes(url.toString(), {
+  const { content } = await requestBytes(rawUrl, {
     headers,
     timeout: SUBSCRIPTION_TIMEOUT_MS,
     limit: MAX_SUBSCRIPTION_BYTES,
@@ -3114,28 +3685,35 @@ const fetchSubscriptionJson = async rawUrl => {
 
 const handleApi = async (req, res, url) => {
   if (req.method === 'OPTIONS') {
-    send(res, 204, '', {
-      'Access-Control-Allow-Origin': '*',
-      'Access-Control-Allow-Methods': 'GET,POST,PUT,DELETE,OPTIONS',
-      'Access-Control-Allow-Headers': 'Content-Type',
-    })
+    try {
+      assertSameOriginApiRequest(req, url)
+      send(res, 204, '')
+    } catch (error) {
+      sendApiError(
+        res,
+        error instanceof ApiError ? error.status : 403,
+        error instanceof Error ? error.message : String(error),
+        error instanceof ApiError ? error.errorCode : undefined,
+      )
+    }
     return true
   }
 
   if (url.pathname === '/api/source-subscription' && req.method === 'GET') {
     try {
+      assertSameOriginApiRequest(req, url)
       const rawUrl = url.searchParams.get('url') ?? ''
       const content = await fetchSubscriptionJson(rawUrl)
       send(res, 200, content, {
         'Content-Type': 'application/json; charset=utf-8',
-        'Access-Control-Allow-Origin': '*',
         'Cache-Control': 'no-store',
       })
     } catch (error) {
       sendApiError(
         res,
-        400,
+        error instanceof ApiError ? error.status : 400,
         error instanceof Error ? error.message : String(error),
+        error instanceof ApiError ? error.errorCode : undefined,
       )
     }
     return true
@@ -3143,12 +3721,14 @@ const handleApi = async (req, res, url) => {
 
   if (url.pathname === '/api/source-fetch' && req.method === 'POST') {
     try {
+      assertSameOriginApiRequest(req, url)
       sendApiOk(res, await fetchSourceText(await readJsonBody(req)))
     } catch (error) {
       sendApiError(
         res,
-        400,
+        error instanceof ApiError ? error.status : 400,
         error instanceof Error ? error.message : String(error),
+        error instanceof ApiError ? error.errorCode : undefined,
       )
     }
     return true
@@ -3157,6 +3737,7 @@ const handleApi = async (req, res, url) => {
   if (!url.pathname.startsWith('/api/')) return false
 
   try {
+    assertSameOriginApiRequest(req, url)
     try {
       await ensureDatabase()
     } catch (error) {
@@ -3183,7 +3764,9 @@ const handleApi = async (req, res, url) => {
     }
 
     if (url.pathname === '/api/read-config' && req.method === 'PUT') {
-      await saveReadConfig(await readJsonBody(req))
+      const config = await readJsonBody(req)
+      if (!isRecord(config)) throw badRequest('阅读配置必须是对象')
+      await saveReadConfig(config)
       sendApiOk(res, '阅读配置已保存到 PG')
       return true
     }
@@ -3191,7 +3774,7 @@ const handleApi = async (req, res, url) => {
     if (url.pathname === '/api/book-source-search' && req.method === 'POST') {
       const body = await readJsonBody(req)
       if (!isRecord(body) || typeof body.keyword !== 'string') {
-        throw new Error('搜索请求缺少 keyword')
+        throw badRequest('搜索请求缺少 keyword')
       }
       sendApiOk(res, await searchBookSources(body.keyword))
       return true
@@ -3240,19 +3823,24 @@ const handleApi = async (req, res, url) => {
         typeof file.name !== 'string' ||
         typeof file.text !== 'string'
       ) {
-        throw new Error('导入 TXT 请求缺少 name/text')
+        throw badRequest('导入 TXT 请求缺少 name/text')
+      }
+      const fileName = requireNonEmptyString(file.name, 'TXT 文件名')
+      const fileText = requireNonEmptyString(file.text, 'TXT 内容')
+      if (fileName.length > 255) {
+        throw badRequest('TXT 文件名不能超过 255 个字符')
       }
       if (
-        !file.name.toLocaleLowerCase().endsWith('.txt') &&
+        !fileName.toLocaleLowerCase().endsWith('.txt') &&
         file.type !== 'text/plain'
       ) {
-        throw new Error('当前纯 Web 版本仅支持导入 TXT 文本书籍')
+        throw badRequest('当前纯 Web 版本仅支持导入 TXT 文本书籍')
       }
-      const chapters = parseTextChapters(file.text)
+      const chapters = parseTextChapters(fileText)
       const book = buildBook(
         {
-          name: file.name,
-          size: Number(file.size) || Buffer.byteLength(file.text),
+          name: fileName,
+          size: Number(file.size) || Buffer.byteLength(fileText),
           lastModified: Number(file.lastModified) || Date.now(),
         },
         chapters,
@@ -3271,7 +3859,7 @@ const handleApi = async (req, res, url) => {
     }
 
     if (url.pathname === '/api/chapters' && req.method === 'GET') {
-      const bookUrl = url.searchParams.get('bookUrl') ?? ''
+      const bookUrl = requireQueryParam(url, 'bookUrl', '书籍地址')
       const chapters = await getChapters(bookUrl)
       if (chapters.length === 0)
         sendApiError(res, 404, '这本书还没有章节，请重新导入')
@@ -3280,8 +3868,8 @@ const handleApi = async (req, res, url) => {
     }
 
     if (url.pathname === '/api/chapter-content' && req.method === 'GET') {
-      const bookUrl = url.searchParams.get('bookUrl') ?? ''
-      const index = Number(url.searchParams.get('index') ?? '0')
+      const bookUrl = requireQueryParam(url, 'bookUrl', '书籍地址')
+      const index = requireNonNegativeIntegerParam(url, 'index', '章节序号')
       const content = await getChapterContent(bookUrl, index)
       if (content === undefined) sendApiError(res, 404, '章节不存在或已被删除')
       else sendApiOk(res, content)
@@ -3289,7 +3877,7 @@ const handleApi = async (req, res, url) => {
     }
 
     if (url.pathname === '/api/book' && req.method === 'DELETE') {
-      const bookUrl = url.searchParams.get('bookUrl') ?? ''
+      const bookUrl = requireQueryParam(url, 'bookUrl', '书籍地址')
       await query(`DELETE FROM ${SCHEMA}.books WHERE book_url = $1`, [bookUrl])
       sendApiOk(res, '书籍已从 PG 删除')
       return true
@@ -3316,8 +3904,9 @@ const handleApi = async (req, res, url) => {
   } catch (error) {
     sendApiError(
       res,
-      500,
+      error instanceof ApiError ? error.status : 500,
       error instanceof Error ? error.message : String(error),
+      error instanceof ApiError ? error.errorCode : undefined,
     )
   }
   return true
@@ -3327,7 +3916,15 @@ const etag = buffer =>
   `"${crypto.createHash('sha1').update(buffer).digest('hex').slice(0, 16)}"`
 
 const serveStatic = async (req, res, url) => {
-  const decodedPath = decodeURIComponent(url.pathname)
+  let decodedPath
+  try {
+    decodedPath = decodeURIComponent(url.pathname)
+  } catch {
+    send(res, 400, 'Bad Request', {
+      'Content-Type': 'text/plain; charset=utf-8',
+    })
+    return
+  }
   const relativePath = decodedPath === '/' ? 'index.html' : decodedPath.slice(1)
   let filePath = path.resolve(staticDir, relativePath)
   const relativeToStaticDir = path.relative(staticDir, filePath)
@@ -3376,12 +3973,21 @@ const serveStatic = async (req, res, url) => {
 }
 
 const server = http.createServer(async (req, res) => {
-  const url = new URL(
-    req.url ?? '/',
-    `http://${req.headers.host ?? 'localhost'}`,
-  )
-  if (await handleApi(req, res, url)) return
-  await serveStatic(req, res, url)
+  try {
+    const url = new URL(
+      req.url ?? '/',
+      `http://${req.headers.host ?? 'localhost'}`,
+    )
+    if (await handleApi(req, res, url)) return
+    await serveStatic(req, res, url)
+  } catch (error) {
+    if (!res.headersSent) {
+      send(res, 500, 'Internal Server Error', {
+        'Content-Type': 'text/plain; charset=utf-8',
+      })
+    }
+    console.error(error)
+  }
 })
 
 server.listen(args.port, args.host, async () => {

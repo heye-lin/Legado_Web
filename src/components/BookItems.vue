@@ -58,8 +58,8 @@
               :disabled="isBookImporting(book)"
               :aria-label="`加入书架：${book.name}`"
               @click.stop="handleImport(book)"
-              @keydown.enter.stop
-              @keydown.space.stop
+              @keydown.enter.stop.prevent="handleImport(book)"
+              @keydown.space.stop.prevent="handleImport(book)"
             >
               加入书架
             </el-button>
@@ -131,10 +131,17 @@ const escapeSvgText = (text: string) =>
     return entities[char]
   })
 
+const truncateSvgText = (text: string, maxLength: number) => {
+  const chars = Array.from(text.trim())
+  return chars.length > maxLength
+    ? `${chars.slice(0, maxLength).join('')}…`
+    : chars.join('')
+}
+
 const getPlaceholderCover = (book: BookItem) => {
-  const title = escapeSvgText(book.name || '阅读')
+  const title = escapeSvgText(truncateSvgText(book.name || '阅读', 8))
   const subtitle = escapeSvgText(
-    isSourceSearchBook(book) ? book.sourceName : '本地书籍',
+    truncateSvgText(isSourceSearchBook(book) ? book.sourceName : '本地书籍', 12),
   )
   const initial = escapeSvgText(Array.from(book.name || '书')[0] ?? '书')
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="168" height="224" viewBox="0 0 168 224"><defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#f4d7a1"/><stop offset="1" stop-color="#7aa7d9"/></linearGradient></defs><rect width="168" height="224" rx="12" fill="url(#g)"/><text x="84" y="92" text-anchor="middle" font-size="48" font-family="serif" fill="#fff">${initial}</text><text x="84" y="142" text-anchor="middle" font-size="17" font-family="sans-serif" font-weight="700" fill="#fff">${title}</text><text x="84" y="172" text-anchor="middle" font-size="12" font-family="sans-serif" fill="rgba(255,255,255,.82)">${subtitle}</text></svg>`
