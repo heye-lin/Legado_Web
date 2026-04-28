@@ -1331,6 +1331,7 @@ const parseSourceHeaders = (rawHeader, options) => {
     const key = normalizeHeaderToken(rawKey)
     const value = normalizeHeaderToken(rawValue)
     if (!key || !value) return
+    if (/\b(?:book|java|result|source)\./.test(value)) return
     if (isForbiddenProxyHeader(key, options)) {
       warnings.push(`已忽略代理禁止转发的请求头 ${key}`)
       return
@@ -1529,6 +1530,7 @@ const buildSourceSearchRequest = (source, searchKey) => {
 
 const RULE_ATTRIBUTE_NAMES = new Set([
   'text',
+  'textnodes',
   'html',
   'href',
   'src',
@@ -1719,6 +1721,14 @@ const selectRuleTarget = ($, scope, selectors) => {
     [scope],
   )
   return nodes[0] === undefined ? undefined : $(nodes[0])
+}
+
+const selectRuleTargets = ($, scope, selectors) => {
+  const nodes = selectors.reduce(
+    (current, selector) => selectRuleNodes($, current, selector),
+    [scope],
+  )
+  return nodes.length === 0 ? undefined : $(nodes)
 }
 
 const readSingleRuleValue = ($, scope, rule, baseUrl) => {
@@ -1964,6 +1974,7 @@ const readJsonAccessorValues = (value, path) => {
 
 const readJsonPathText = (value, path) =>
   readJsonAccessorValues(value, path)
+    .flatMap(item => (Array.isArray(item) ? item : [item]))
     .map(normalizeRuleText)
     .filter(Boolean)
     .join(',')
@@ -2009,24 +2020,47 @@ const normalizeJsonRuleBody = (ruleBody, item) =>
     (_, expression) => readJsonPathText(item, expression.trim()),
   )
 
-const renderJsonRuleTemplate = (ruleBody, item) =>
+const readBookTemplateValue = (context, expression) => {
+  const match = expression.trim().match(/^book\.([A-Za-z_$][\w$]*)$/)
+  if (match === null || !isRecord(context?.book)) return undefined
+  return normalizeRuleText(context.book[match[1]])
+}
+
+const renderBookTemplate = (ruleBody, context) =>
+  ruleBody.replace(/\{\{\s*book\.([A-Za-z_$][\w$]*)\s*\}\}/g, (_, field) =>
+    isRecord(context?.book) ? normalizeRuleText(context.book[field]) : '',
+  )
+
+const hasBookTemplate = rule => /\{\{\s*book\.[A-Za-z_$][\w$]*\s*\}\}/.test(rule)
+
+const readBookTemplateRuleValue = (rule, context) => {
+  const [ruleBody, ...replacements] = String(rule ?? '').trim().split('##')
+  return applyRuleReplacements(
+    renderBookTemplate(ruleBody, context),
+    replacements.filter(Boolean),
+  )
+}
+
+const renderJsonRuleTemplate = (ruleBody, item, context = {}) =>
   ruleBody
     .replace(/\{\{(.*?)\}\}/g, (_, expression) => {
       const path = expression.trim()
-      return path === '' ? '' : readJsonPathText(item, path)
+      return path === ''
+        ? ''
+        : (readBookTemplateValue(context, path) ?? readJsonPathText(item, path))
     })
     .replace(/\{(\$[\s\S]*?)\}/g, (_, expression) =>
       readJsonPathText(item, expression.trim()),
     )
 
-const readJsonRuleValue = (item, rule) => {
+const readJsonRuleValue = (item, rule, context = {}) => {
   const parsedRule = parseRule(rule)
   if (parsedRule === undefined) return ''
 
   const [ruleBody] = rule.trim().split('##')
   const normalizedRuleBody = normalizeJsonRuleBody(ruleBody, item)
   const hasTemplate = /\{\{[\s\S]*?\}\}|\{\$[\s\S]*?\}/.test(normalizedRuleBody)
-  const templateValue = renderJsonRuleTemplate(normalizedRuleBody, item)
+  const templateValue = renderJsonRuleTemplate(normalizedRuleBody, item, context)
   const value = hasTemplate
     ? templateValue
     : isJsonPathCompoundRule(normalizedRuleBody)
@@ -2114,8 +2148,15 @@ const buildSourceSearchBook = ($, source, node, baseUrl, index) => {
   const name = readRuleValue($, scope, rule.name, baseUrl)
   if (!name) return undefined
 
+  const author = readOptionalRuleValue($, scope, rule.author, baseUrl)
+  const kind = readOptionalRuleValue($, scope, rule.kind, baseUrl) || undefined
+  const wordCount =
+    readOptionalRuleValue($, scope, rule.wordCount, baseUrl) || undefined
+  const templateContext = { book: { name, author, kind, wordCount } }
   const bookUrl = resolveHttpUrl(
-    readRuleValue($, scope, rule.bookUrl, baseUrl),
+    hasBookTemplate(rule.bookUrl)
+      ? readBookTemplateRuleValue(rule.bookUrl, templateContext)
+      : readRuleValue($, scope, rule.bookUrl, baseUrl),
     baseUrl,
   )
   if (!bookUrl) return undefined
@@ -2128,11 +2169,10 @@ const buildSourceSearchBook = ($, source, node, baseUrl, index) => {
   return attachSourceSearchBookSignature({
     entryType: 'source-search',
     name,
-    author: readOptionalRuleValue($, scope, rule.author, baseUrl),
+    author,
     bookUrl,
-    kind: readOptionalRuleValue($, scope, rule.kind, baseUrl) || undefined,
-    wordCount:
-      readOptionalRuleValue($, scope, rule.wordCount, baseUrl) || undefined,
+    kind,
+    wordCount,
     sourceName: source.bookSourceName,
     sourceUrl: source.bookSourceUrl,
     origin: source.bookSourceUrl,
@@ -2157,7 +2197,14 @@ const buildJsonSourceSearchBook = (source, item, baseUrl, index) => {
   const name = readJsonRuleValue(item, rule.name)
   if (!name) return undefined
 
-  const bookUrl = resolveHttpUrl(readJsonRuleValue(item, rule.bookUrl), baseUrl)
+  const author = readJsonRuleValue(item, rule.author)
+  const kind = readJsonRuleValue(item, rule.kind) || undefined
+  const wordCount = readJsonRuleValue(item, rule.wordCount) || undefined
+  const templateContext = { book: { name, author, kind, wordCount } }
+  const bookUrl = resolveHttpUrl(
+    readJsonRuleValue(item, rule.bookUrl, templateContext),
+    baseUrl,
+  )
   if (!bookUrl) return undefined
 
   const coverUrl = resolveImageUrl(
@@ -2168,10 +2215,10 @@ const buildJsonSourceSearchBook = (source, item, baseUrl, index) => {
   return attachSourceSearchBookSignature({
     entryType: 'source-search',
     name,
-    author: readJsonRuleValue(item, rule.author),
+    author,
     bookUrl,
-    kind: readJsonRuleValue(item, rule.kind) || undefined,
-    wordCount: readJsonRuleValue(item, rule.wordCount) || undefined,
+    kind,
+    wordCount,
     sourceName: source.bookSourceName,
     sourceUrl: source.bookSourceUrl,
     origin: source.bookSourceUrl,
@@ -2578,18 +2625,36 @@ const sourceRuntimeNotes = source => {
   return notes
 }
 
-const fetchSourcePageText = async (source, rawUrl, label) => {
+const fetchSourcePageText = async (
+  source,
+  rawUrl,
+  label,
+  requestOptions = {},
+) => {
   const url = resolveHttpUrl(rawUrl, source.bookSourceUrl)
   if (!url) throw new SourceParseError(`${label}必须是 http/https URL`)
+  const method = requestOptions.method === 'POST' ? 'POST' : 'GET'
 
   const { headers, warnings } = parseSourceHeaders(source.header, {
     allowOriginReferer: true,
   })
-  applyDefaultSourceSearchHeaders(headers, url, 'GET')
+  applyDefaultSourceSearchHeaders(headers, url, method)
+  if (
+    method === 'POST' &&
+    requestOptions.contentType &&
+    !hasHeader(headers, 'content-type')
+  ) {
+    headers['Content-Type'] = requestOptions.contentType
+  }
 
   try {
     const response = await requestBytes(url, {
+      method,
       headers: normalizeProxyHeaders(headers, { allowOriginReferer: true }),
+      body:
+        typeof requestOptions.body === 'string'
+          ? requestOptions.body
+          : undefined,
       timeout: SOURCE_FETCH_TIMEOUT_MS,
       urlLabel: label,
     })
@@ -2887,10 +2952,12 @@ const readOptionalCriticalSourceRuleValue = (
   rule,
   baseUrl,
   label,
+  context = {},
 ) => {
   if (!rule?.trim()) return ''
   assertSupportedRule(rule, label)
   try {
+    if (hasBookTemplate(rule)) return readBookTemplateRuleValue(rule, context)
     if (jsonData !== undefined && !isJsonReadableRule(rule)) {
       throw new Error('JSON 页面规则必须使用 JSONPath、JSON accessor 或模板')
     }
@@ -2946,6 +3013,15 @@ const parseSourceBookInfo = (source, searchBook, page) => {
   const root = $.root()
   const read = item =>
     readOptionalSourceRuleValue($, root, jsonData, item, page.finalUrl)
+  const baseInfo = {
+    name: read(rule.name) || searchBook.name,
+    author: read(rule.author) || searchBook.author || '作者未知',
+    kind: read(rule.kind) || searchBook.kind,
+    wordCount: read(rule.wordCount) || searchBook.wordCount,
+    latestChapterTitle: read(rule.lastChapter) || searchBook.latestChapterTitle,
+    intro: read(rule.intro) || searchBook.intro,
+  }
+  const templateContext = { book: { ...searchBook, ...baseInfo } }
   const readCritical = (item, label) =>
     readOptionalCriticalSourceRuleValue(
       $,
@@ -2954,6 +3030,7 @@ const parseSourceBookInfo = (source, searchBook, page) => {
       item,
       page.finalUrl,
       label,
+      templateContext,
     )
   const tocUrl =
     resolveOptionalHttpUrl(
@@ -2964,12 +3041,7 @@ const parseSourceBookInfo = (source, searchBook, page) => {
     searchBook.bookUrl
 
   return {
-    name: read(rule.name) || searchBook.name,
-    author: read(rule.author) || searchBook.author || '作者未知',
-    kind: read(rule.kind) || searchBook.kind,
-    wordCount: read(rule.wordCount) || searchBook.wordCount,
-    latestChapterTitle: read(rule.lastChapter) || searchBook.latestChapterTitle,
-    intro: read(rule.intro) || searchBook.intro,
+    ...baseInfo,
     coverUrl:
       resolveImageUrl(read(rule.coverUrl), page.finalUrl) ||
       searchBook.coverUrl,
@@ -2987,6 +3059,7 @@ const buildSourceChapterRecord = ({
   isVip,
   isPay,
   tag,
+  contentRequest,
 }) => ({
   id: chapterId(bookUrl, index),
   url: chapterUrl,
@@ -2998,6 +3071,7 @@ const buildSourceChapterRecord = ({
   isVip,
   isPay,
   tag: tag || undefined,
+  contentRequest,
   content: '',
 })
 
@@ -3085,36 +3159,113 @@ const parseHtmlSourceTocPage = (source, page) => {
   return { chapters, nextTocUrl }
 }
 
-const parseJsonSourceTocPage = (source, page, jsonData) => {
+const readStaticJsChapterName = (rule, item) => {
+  const text = String(rule ?? '')
+  if (!/^@js:/i.test(text) || !/\bresult\.serialName\b/.test(text)) return ''
+  const title = normalizeRuleText(item?.serialName)
+  if (!title) return ''
+  if (!/\bisFree\b|\bchargeStatus\b/.test(text)) return title
+  const isFree =
+    item?.isFree === true || item?.isFree === 1 || item?.chargeStatus === 0
+  return `${isFree ? '【👀】' : '【收💰费】'}${title}`
+}
+
+const buildStaticJsChapterContentRequest = (rule, item, context) => {
+  const text = String(rule ?? '')
+  if (
+    !/^@js:/i.test(text) ||
+    !text.includes('ContentAnchorBatch') ||
+    !text.includes('ChapterSeqNo')
+  ) {
+    return undefined
+  }
+  const endpoint =
+    text.match(/["'](https?:\/\/[^"']*\/be-api\/content\/ads-read),?["']/)?.[1] ??
+    text.match(/["'](\/be-api\/content\/ads-read),?["']/)?.[1]
+  const url = resolveHttpUrl(endpoint ?? '', context.bookSourceUrl)
+  const bookId = normalizeRuleText(context.book?.kind ?? context.book?.bookId)
+  const chapterSeqNo = Number(
+    item?.serialID ?? item?.serialId ?? item?.chapterId,
+  )
+  if (!url || !bookId || !Number.isSafeInteger(chapterSeqNo)) return undefined
+  return {
+    url,
+    method: 'POST',
+    contentType: 'application/json',
+    body: JSON.stringify({
+      ContentAnchorBatch: [
+        {
+          BookID: bookId,
+          ChapterSeqNo: [chapterSeqNo],
+        },
+      ],
+      Scene: 'chapter',
+    }),
+  }
+}
+
+const readJsonTocChapterName = (item, rule, page, context) => {
+  if (!isComplexLegadoRule(rule)) {
+    return readRequiredSourceRuleValue(
+      undefined,
+      undefined,
+      item,
+      rule,
+      page.finalUrl,
+      '目录解析',
+    )
+  }
+  const title = readStaticJsChapterName(rule, item, context)
+  if (title) return title
+  throw new Error(`规则「${rule}」超出当前 Web 目录解析支持范围`)
+}
+
+const readJsonTocChapterRequest = (item, rule, page, context) => {
+  if (!isComplexLegadoRule(rule)) {
+    const chapterUrl = resolveHttpUrl(
+      readRequiredSourceRuleValue(
+        undefined,
+        undefined,
+        item,
+        rule,
+        page.finalUrl,
+        '目录解析',
+      ),
+      page.finalUrl,
+    )
+    return chapterUrl ? { url: chapterUrl } : undefined
+  }
+  const request = buildStaticJsChapterContentRequest(rule, item, context)
+  if (request !== undefined) return request
+  throw new Error(`规则「${rule}」超出当前 Web 目录解析支持范围`)
+}
+
+const parseJsonSourceTocPage = (source, page, jsonData, context) => {
   const rule = source.ruleToc ?? {}
   const items = readJsonPathUnionValues(jsonData, rule.chapterList, {
     flattenTerminalArrays: true,
   })
   const chapters = items
     .map(item => {
-      const title = readRequiredSourceRuleValue(
-        undefined,
-        undefined,
+      const title = readJsonTocChapterName(item, rule.chapterName, page, context)
+      const chapterRequest = readJsonTocChapterRequest(
         item,
-        rule.chapterName,
-        page.finalUrl,
-        '目录解析',
+        rule.chapterUrl,
+        page,
+        context,
       )
-      const chapterUrl = resolveHttpUrl(
-        readRequiredSourceRuleValue(
-          undefined,
-          undefined,
-          item,
-          rule.chapterUrl,
-          page.finalUrl,
-          '目录解析',
-        ),
-        page.finalUrl,
-      )
-      if (!title || !chapterUrl) return undefined
+      if (!title || chapterRequest === undefined) return undefined
       return {
         title,
-        chapterUrl,
+        chapterUrl: chapterRequest.url,
+        contentRequest:
+          chapterRequest.method === undefined
+            ? undefined
+            : {
+                method: chapterRequest.method,
+                body: chapterRequest.body,
+                contentType: chapterRequest.contentType,
+              },
         isVolume: parseRuleBoolean(
           readOptionalSourceRuleValue(
             undefined,
@@ -3169,24 +3320,36 @@ const parseJsonSourceTocPage = (source, page, jsonData) => {
   return { chapters, nextTocUrl }
 }
 
-const parseSourceTocPage = (source, page) => {
+const isSupportedJsonTocJsRule = rule =>
+  readStaticJsChapterName(rule, { serialName: 'x' }) !== '' ||
+  (/^@js:/i.test(String(rule ?? '')) &&
+    String(rule ?? '').includes('ContentAnchorBatch') &&
+    String(rule ?? '').includes('ChapterSeqNo'))
+
+const assertSupportedTocRule = (rule, label) => {
+  if (!isComplexLegadoRule(rule)) return
+  if (isSupportedJsonTocJsRule(rule)) return
+  assertSupportedRule(rule, label)
+}
+
+const parseSourceTocPage = (source, page, context) => {
   const rule = source.ruleToc ?? {}
   if (!rule.chapterList?.trim()) throw new Error('书源未配置目录列表规则')
   if (!rule.chapterName?.trim()) throw new Error('书源未配置章节名称规则')
   if (!rule.chapterUrl?.trim()) throw new Error('书源未配置章节地址规则')
   assertSupportedRule(rule.chapterList, '目录解析')
-  assertSupportedRule(rule.chapterName, '目录解析')
-  assertSupportedRule(rule.chapterUrl, '目录解析')
+  assertSupportedTocRule(rule.chapterName, '目录解析')
+  assertSupportedTocRule(rule.chapterUrl, '目录解析')
 
   const jsonData = shouldParseSearchResponseAsJson(rule.chapterList, page.text)
     ? parseJsonSearchResponse(page.text)
     : undefined
   return jsonData === undefined
     ? parseHtmlSourceTocPage(source, page)
-    : parseJsonSourceTocPage(source, page, jsonData)
+    : parseJsonSourceTocPage(source, page, jsonData, context)
 }
 
-const parseSourceBookChapters = async (source, bookUrl, tocUrl) => {
+const parseSourceBookChapters = async (source, book, tocUrl) => {
   const chapters = []
   const seenChapterUrls = new Set()
   const seenTocUrls = new Set()
@@ -3208,22 +3371,28 @@ const parseSourceBookChapters = async (source, bookUrl, tocUrl) => {
     const page = await fetchSourcePageText(source, nextTocUrl, '目录地址')
     let parsed
     try {
-      parsed = parseSourceTocPage(source, page)
+      parsed = parseSourceTocPage(source, page, {
+        book,
+        bookSourceUrl: source.bookSourceUrl,
+      })
     } catch (error) {
       throw wrapSourcePageParseError(source, page, '目录', error)
     }
     for (const chapter of parsed.chapters) {
-      if (seenChapterUrls.has(chapter.chapterUrl)) continue
+      const chapterKey = `${chapter.chapterUrl}\u0000${
+        chapter.contentRequest?.body ?? ''
+      }`
+      if (seenChapterUrls.has(chapterKey)) continue
       if (chapters.length >= SOURCE_CHAPTER_LIMIT) {
         throw new Error(
           `目录章节数超过 ${SOURCE_CHAPTER_LIMIT} 章，已停止，未写入书架`,
         )
       }
-      seenChapterUrls.add(chapter.chapterUrl)
+      seenChapterUrls.add(chapterKey)
       chapters.push(
         buildSourceChapterRecord({
           ...chapter,
-          bookUrl,
+          bookUrl: book.bookUrl,
           tocUrl: page.finalUrl,
           index: chapters.length,
         }),
@@ -3300,7 +3469,7 @@ const importSourceBook = async payload => {
   }
   const chapters = await parseSourceBookChapters(
     source,
-    searchBook.bookUrl,
+    { ...searchBook, ...info, bookUrl: searchBook.bookUrl },
     info.tocUrl,
   )
   const book = buildSourceShelfBook(source, searchBook, info, chapters)
@@ -3478,6 +3647,15 @@ const structuredElementText = ($, target) => {
     .join('\n')
 }
 
+const textNodesText = ($, target) =>
+  target
+    .contents()
+    .toArray()
+    .filter(node => node.type === 'text')
+    .map(node => $(node).text().replace(/\u00a0/g, ' ').trim())
+    .filter(Boolean)
+    .join('\n')
+
 const readSingleContentRuleValue = ($, scope, rule, baseUrl) => {
   const parsedRule = parseRule(rule)
   if (parsedRule === undefined) return ''
@@ -3485,7 +3663,7 @@ const readSingleContentRuleValue = ($, scope, rule, baseUrl) => {
   const target =
     parsedRule.selectors.length === 0
       ? scope
-      : selectRuleTarget($, scope.get(0), parsedRule.selectors)
+      : selectRuleTargets($, scope.get(0), parsedRule.selectors)
   if (target === undefined || target.length === 0) return ''
 
   const attribute = parsedRule.attribute.toLocaleLowerCase()
@@ -3495,9 +3673,19 @@ const readSingleContentRuleValue = ($, scope, rule, baseUrl) => {
       parsedRule.replacements,
     )
   }
+  if (attribute === 'textnodes') {
+    return applyRuleReplacements(
+      textNodesText($, target),
+      parsedRule.replacements,
+    )
+  }
   if (attribute === 'html') {
     return applyRuleReplacements(
-      target.html()?.trim() ?? '',
+      target
+        .toArray()
+        .map(node => $(node).html()?.trim() ?? '')
+        .filter(Boolean)
+        .join('\n'),
       parsedRule.replacements,
     )
   }
@@ -3630,7 +3818,12 @@ const parseSourceChapterContent = async (book, chapter) => {
       )
     }
     seenUrls.add(nextUrlKey)
-    const page = await fetchSourcePageText(source, nextUrl, '章节地址')
+    const page = await fetchSourcePageText(
+      source,
+      nextUrl,
+      '章节地址',
+      chapter.contentRequest,
+    )
     let parsed
     try {
       parsed = await parseSourceContentPage(source, page)
