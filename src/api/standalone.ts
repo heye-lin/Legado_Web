@@ -593,7 +593,7 @@ const defaultSourceList = (kind: SourceKind): Source[] =>
           ruleContent: {},
           ruleExplore: {},
           bookSourceComment:
-            '纯浏览器版会保存书源配置；跨站抓取受浏览器 CORS 限制，完整 Legado 规则引擎需要后续单独实现。',
+            '生产服务会用同源代理抓取搜索页；完整 Legado 规则引擎需要后续单独实现。',
         } as BookSource,
       ]
     : [
@@ -603,7 +603,7 @@ const defaultSourceList = (kind: SourceKind): Source[] =>
           sourceIcon: '',
           sourceGroup: '示例',
           sourceComment:
-            '纯浏览器版会保存订阅源配置；读取远程内容取决于目标站是否允许 CORS。',
+            '生产服务会优先保存到 PostgreSQL；静态降级模式会保存到浏览器本地。',
           enabled: true,
           singleUrl: true,
           articleStyle: 0,
@@ -658,6 +658,11 @@ type SourceSearchRequest = {
   warnings: string[]
 }
 
+type SourceFetchProxyResult = {
+  finalUrl: string
+  text: string
+}
+
 const SOURCE_SEARCH_CONCURRENCY = 4
 const SOURCE_SEARCH_TIMEOUT_MS = 12000
 const SOURCE_SEARCH_RESULT_LIMIT = 50
@@ -675,7 +680,7 @@ const FORBIDDEN_SOURCE_HEADER_NAMES = new Set([
 ])
 const FORBIDDEN_SOURCE_HEADER_PREFIXES = ['proxy-', 'sec-']
 const COMPLEX_LEGADO_RULE_PATTERN =
-  /(^\s*(js:|@js:|xpath:|json:|regex:)|@js\b|<js>|&&|\|\||##)/i
+  /(^\s*(js:|@js:|xpath:|json:|regex:)|@js\b|<js>|&&|\|\|)/i
 
 const unique = <T>(values: T[]) => Array.from(new Set(values))
 
@@ -816,13 +821,16 @@ const fetchTextWithTimeout = async (
     SOURCE_SEARCH_TIMEOUT_MS,
   )
   try {
-    const response = await fetch(url, { ...init, signal: controller.signal })
-    if (!response.ok) {
-      throw new Error(`HTTP ${response.status}`)
-    }
-    return {
-      html: await response.text(),
-      responseUrl: response.url || url,
+    try {
+      return await fetchTextWithProxy(url, init, controller.signal)
+    } catch (proxyError) {
+      try {
+        return await fetchTextDirect(url, init, controller.signal)
+      } catch (directError) {
+        throw new Error(
+          `同源代理与浏览器直连均失败。代理：${getErrorMessage(proxyError)}；直连：${getErrorMessage(directError)}`,
+        )
+      }
     }
   } finally {
     window.clearTimeout(timeoutId)
@@ -830,25 +838,109 @@ const fetchTextWithTimeout = async (
   }
 }
 
+const headersToRecord = (headers: RequestInit['headers']) => {
+  const result: Record<string, string> = {}
+  new Headers(headers).forEach((value, key) => {
+    result[key] = value
+  })
+  return result
+}
+
+const fetchTextWithProxy = async (
+  url: string,
+  init: RequestInit,
+  signal: AbortSignal,
+) => {
+  const response = await fetch('/api/source-fetch', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      url,
+      method: init.method ?? 'GET',
+      headers: headersToRecord(init.headers),
+      body: typeof init.body === 'string' ? init.body : undefined,
+    }),
+    signal,
+  })
+  if (!response.ok) throw new Error(`HTTP ${response.status}`)
+
+  const payload =
+    (await response.json()) as LegadoApiResponse<SourceFetchProxyResult>
+  if (!payload.isSuccess) throw new Error(payload.errorMsg)
+  return {
+    html: payload.data.text,
+    responseUrl: payload.data.finalUrl || url,
+  }
+}
+
+const fetchTextDirect = async (
+  url: string,
+  init: RequestInit,
+  signal: AbortSignal,
+) => {
+  const response = await fetch(url, { ...init, signal })
+  if (!response.ok) {
+    throw new Error(`HTTP ${response.status}`)
+  }
+  return {
+    html: await response.text(),
+    responseUrl: response.url || url,
+  }
+}
+
 type ParsedRule = {
   selector: string
   attribute: string
+  replacements: string[]
 }
 
 const parseCssRule = (rule: string | undefined): ParsedRule | undefined => {
   const trimmed = rule?.trim()
   if (!trimmed) return undefined
 
-  const attrIndex = trimmed.lastIndexOf('@')
-  if (attrIndex === -1) return { selector: trimmed, attribute: 'text' }
+  const [ruleBody, ...replacements] = trimmed.split('##')
+  const attrIndex = ruleBody.lastIndexOf('@')
+  if (attrIndex === -1) {
+    return {
+      selector: ruleBody.trim(),
+      attribute: 'text',
+      replacements: replacements.filter(Boolean),
+    }
+  }
   return {
-    selector: trimmed.slice(0, attrIndex).trim(),
-    attribute: trimmed.slice(attrIndex + 1).trim() || 'text',
+    selector: ruleBody.slice(0, attrIndex).trim(),
+    attribute: ruleBody.slice(attrIndex + 1).trim() || 'text',
+    replacements: replacements.filter(Boolean),
   }
 }
 
+const parseContainsSelector = (selector: string) => {
+  const contains: string[] = []
+  const cssSelector = selector
+    .replace(/:contains\((['"]?)(.*?)\1\)/g, (_, __, text: string) => {
+      contains.push(text)
+      return ''
+    })
+    .trim()
+  return { cssSelector, contains }
+}
+
+const selectRuleTargets = (scope: ParentNode, selector: string) => {
+  const { cssSelector, contains } = parseContainsSelector(selector)
+  const nodes =
+    cssSelector === ''
+      ? [scope].filter((node): node is Element => node instanceof Element)
+      : Array.from(scope.querySelectorAll(cssSelector))
+
+  if (contains.length === 0) return nodes
+  return nodes.filter(node => {
+    const text = node.textContent ?? ''
+    return contains.every(item => text.includes(item))
+  })
+}
+
 const selectRuleTarget = (scope: Element, selector: string) =>
-  selector === '' ? scope : scope.querySelector(selector)
+  selector === '' ? scope : (selectRuleTargets(scope, selector)[0] ?? null)
 
 const isHttpUrl = (url: string) => {
   try {
@@ -890,6 +982,15 @@ const resolveImageUrl = (value: string, baseUrl: string) => {
   }
 }
 
+const applyRuleReplacements = (value: string, replacements: string[]) =>
+  replacements.reduce((text, pattern) => {
+    try {
+      return text.replace(new RegExp(pattern, 'g'), '')
+    } catch {
+      return text.split(pattern).join('')
+    }
+  }, value)
+
 const readRuleValue = (
   scope: Element,
   rule: string | undefined,
@@ -902,15 +1003,28 @@ const readRuleValue = (
   if (target === null) return ''
 
   const attribute = parsedRule.attribute.toLocaleLowerCase()
-  if (attribute === 'text') return target.textContent?.trim() ?? ''
-  if (attribute === 'html') return target.innerHTML.trim()
+  if (attribute === 'text') {
+    return applyRuleReplacements(
+      target.textContent?.trim() ?? '',
+      parsedRule.replacements,
+    )
+  }
+  if (attribute === 'html') {
+    return applyRuleReplacements(
+      target.innerHTML.trim(),
+      parsedRule.replacements,
+    )
+  }
 
   const attrValue = target.getAttribute(parsedRule.attribute)?.trim() ?? ''
   if (!attrValue) return ''
   if (attribute === 'href' || attribute === 'src') {
-    return new URL(attrValue, baseUrl).toString()
+    return applyRuleReplacements(
+      new URL(attrValue, baseUrl).toString(),
+      parsedRule.replacements,
+    )
   }
-  return attrValue
+  return applyRuleReplacements(attrValue, parsedRule.replacements)
 }
 
 const isComplexLegadoRule = (rule: string | undefined) =>
@@ -1093,7 +1207,7 @@ const searchSingleBookSource = async (
       options.signal,
     )
     const document = new DOMParser().parseFromString(html, 'text/html')
-    const nodes = Array.from(document.querySelectorAll(listRule))
+    const nodes = selectRuleTargets(document, listRule)
     const books = nodes
       .map((node, index) =>
         buildSourceSearchBook(source, node, responseUrl, index),
@@ -1482,7 +1596,7 @@ const debug = (
     '纯 Web 模式已接管源编辑器，不再依赖外部服务。',
     `当前源：${sourceUrl || '未填写'}`,
     searchKey ? `搜索关键字：${searchKey}` : '当前订阅源调试没有搜索关键字。',
-    '说明：完整 Legado 规则调试依赖原生规则引擎与无 CORS 网络访问能力；浏览器纯前端只能调试允许 CORS 的站点，规则引擎需要后续按 Web 标准单独实现。',
+    '说明：完整 Legado 规则调试依赖原生规则引擎；当前 Web 端只实现了受限搜索解析，生产服务会使用同源代理抓取搜索页。',
   ]
   const timeoutIds: number[] = []
   const schedule = (callback: () => void, delay: number) => {
@@ -1573,7 +1687,7 @@ const clearStandaloneData = async (): ApiResult<string> => {
       throw error
     }
   } catch (error) {
-    return fail(error instanceof Error ? error.message : '清空本地数据失败')
+    return fail(error instanceof Error ? error.message : '清空数据失败')
   }
 }
 

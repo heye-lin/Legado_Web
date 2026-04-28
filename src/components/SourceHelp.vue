@@ -3,7 +3,7 @@ import { Link } from '@element-plus/icons-vue'
 </script>
 <template>
   <el-alert
-    title="纯 Web 版支持本地保存书源，并提供受限书源搜索：仅支持允许 CORS 的站点和浏览器 querySelector 可识别的 CSS 选择器规则；完整 Legado/Rhino 规则、登录、CookieJar、目录/正文抓取暂不在浏览器本地模式内直接提供。"
+    title="纯 Web 版支持保存书源，并提供受限书源搜索：生产服务会通过同源代理抓取搜索页，规则侧支持 Web 端可识别的 CSS 选择器、:contains(...) 和 ## 文本清理；完整 Legado/Rhino 规则、登录、CookieJar、目录/正文抓取暂不直接提供。"
     type="info"
     :closable="false"
     show-icon

@@ -1,6 +1,6 @@
 # 阅读 Web 端
 
-这是 `legado` 的纯 Web 前端。当前版本直接在浏览器本地运行，不再要求 Android App 或后端 WebService。
+这是 `legado` 的纯 Web 前端。当前版本直接在浏览器中使用，不再要求 Android App 或原 Android WebService；生产启动脚本会使用 PostgreSQL 持久化书源、订阅源、书架、章节和阅读配置，接口不可用时前端会降级到浏览器本地 IndexedDB/localStorage。
 
 ## 路由
 
@@ -8,7 +8,7 @@
 - `http://localhost:8080/#/bookSource`：书源编辑
 - `http://localhost:8080/#/rssSource`：订阅源编辑
 
-## 纯 Web 本地模式
+## 纯 Web / PostgreSQL 模式
 
 默认直接启动即可：
 
@@ -26,8 +26,8 @@ http://localhost:8080/
 能力：
 
 - 不依赖 Android App 或后端服务。
-- 书籍、章节、阅读进度：保存在浏览器 IndexedDB。
-- 阅读配置、书源配置、订阅源配置：保存在浏览器 localStorage。
+- 生产服务：书籍、章节、阅读进度、阅读配置、书源配置、订阅源配置优先保存在 PostgreSQL。
+- 降级模式：如果同源 `/api/*` 不可用，前端继续使用浏览器 IndexedDB/localStorage。
 - 书架页支持导入本地 `.txt` 文件，也支持拖拽 TXT 到书架区域导入。
 - TXT 会在浏览器内按常见章节标题切分目录；识别不到章节标题时会按长度自动分章。
 - 书架页提供「书源管理」入口和「用书源搜书」按钮；可对浏览器允许访问的书源执行受限搜索，结果仅用于打开来源站详情页。
@@ -36,8 +36,8 @@ http://localhost:8080/
 
 限制：
 
-- 纯浏览器不能绕过目标网站 CORS；目标站未允许跨域读取响应时，Web 端无法直接搜索或抓取。
-- 当前书源搜索是受限 MVP：支持 `searchUrl` + `ruleSearch` 中浏览器 `querySelector` 可识别的 CSS 选择器规则，以及 `@text`、`@html`、`@href`、`@src`、`@属性名` 这类简单抽取；不执行 Legado/Rhino JS、XPath、JSONPath、正则链式规则、CookieJar、登录流程、反爬绕过。
+- 生产服务会用同源 `/api/source-fetch` 代理抓取书源搜索页，避免浏览器 CORS 阻断；如果只用纯静态服务降级运行，则仍受目标网站 CORS 限制。
+- 当前书源搜索是受限 MVP：支持 `searchUrl` + `ruleSearch` 中浏览器 `querySelector` 可识别的 CSS 选择器规则、`:contains(...)` 文本过滤、`##` 文本清理，以及 `@text`、`@html`、`@href`、`@src`、`@属性名` 这类简单抽取；不执行 Legado/Rhino JS、XPath、JSONPath、复杂正则链式规则、CookieJar、登录流程、反爬绕过。
 - 当前书源搜索结果可打开外部详情页；尚未实现远程书籍一键入库、目录解析和在线正文阅读。纯 Web 阅读能力仍以本地 TXT 书籍为主。
 - 备份文件是 JSON 明文，请自行保存好；浏览器清站点数据会删除 IndexedDB/localStorage 中的本地书库。
 
@@ -53,7 +53,14 @@ pnpm build
 dist/
 ```
 
-生产环境建议用仓库内静态服务器启动，它会额外提供 `/api/source-subscription` 订阅 JSON 同源代理，用于导入不允许浏览器 CORS 直连的订阅 URL：
+生产环境建议用仓库内服务启动。它会提供静态页面、PostgreSQL 持久化 API，以及 `/api/source-subscription` 订阅 JSON 同源代理，用于导入不允许浏览器 CORS 直连的订阅 URL：
+
+```bash
+LEGADO_DATABASE_URL=postgres://user:password@127.0.0.1:5432/database \
+  node scripts/serve.mjs --host 0.0.0.0 --port 8080 --directory dist
+```
+
+当前服务器默认会尝试连接 `postgres://iaeno:iaeno@127.0.0.1:5432/cli_proxy`，并自动创建 `legado_web` schema 及所需表。只需要纯静态/浏览器本地降级模式时，可使用旧静态服务：
 
 ```bash
 python3 scripts/serve.py --host 0.0.0.0 --port 8080 --directory dist

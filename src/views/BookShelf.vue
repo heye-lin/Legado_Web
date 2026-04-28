@@ -53,7 +53,7 @@
           <div class="setting-title">基本设定</div>
           <div class="setting-item">
             <el-tag type="success" size="large" class="setting-connect">
-              纯 Web 本地模式
+              PostgreSQL 持久化
             </el-tag>
             <el-button
               class="standalone-action-button"
@@ -99,7 +99,7 @@
               size="small"
               @click="clearStandaloneData"
             >
-              清空本地数据
+              清空数据
             </el-button>
           </div>
         </div>
@@ -194,9 +194,8 @@
           </div>
         </div>
         <div class="source-search-tip">
-          点击结果会在新标签页打开来源站详情；当前不能加入书架或在线阅读。 纯
-          Web 搜索仅支持目标站允许 CORS 且浏览器 querySelector 可识别的 CSS
-          规则。
+          点击结果会在新标签页打开来源站详情；当前不能加入书架或在线阅读。生产服务会通过同源代理抓取搜索页；规则仍需是当前
+          Web 端可识别的简单 CSS/文本清理规则。
         </div>
       </div>
       <div v-if="showStandaloneEmptyState" class="empty-shelf-state">
@@ -228,8 +227,8 @@
         v-else-if="sourceSearchActive && books.length === 0"
         class="source-search-empty"
       >
-        没有可显示的书源搜索结果。请查看上方报告，或到书源管理导入允许 CORS
-        且使用浏览器 querySelector 可识别 CSS 规则的书源。
+        没有可显示的书源搜索结果。请查看上方报告，或到书源管理导入允许同源代理访问且使用
+        Web 端可识别规则的书源。
       </div>
       <book-items
         v-else
@@ -392,9 +391,9 @@ const getSourceSearchEmptyMessage = (reports: SourceSearchReport[]) => {
     return '导入的书源超出当前纯 Web querySelector 搜索范围。'
   }
   if (reports.every(report => report.status === 'failed')) {
-    return '所有书源搜索失败，常见原因是目标站未允许 CORS、网络失败或规则不兼容。'
+    return '所有书源搜索失败，常见原因是目标站网络失败、代理无法访问、反爬拦截或规则不兼容。'
   }
-  return '书源没有返回可显示的搜索结果，请检查书源规则、CORS 或更换书源。'
+  return '书源没有返回可显示的搜索结果，请检查书源规则、网络/代理可达性或更换书源。'
 }
 
 const resetSourceSearchState = () => {

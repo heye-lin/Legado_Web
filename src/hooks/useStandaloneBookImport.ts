@@ -158,8 +158,8 @@ export const useStandaloneBookImport = ({
   const clearStandaloneData = async () => {
     try {
       await ElMessageBox.confirm(
-        '此操作会删除浏览器中的本地书籍、章节、进度、阅读设置和源配置。确定继续？',
-        '清空本地数据',
+        '此操作会删除当前存储中的书籍、章节、进度、阅读设置和源配置。生产服务会清空 PostgreSQL，接口不可用时会清空浏览器本地数据。确定继续？',
+        '清空数据',
         {
           confirmButtonText: '清空',
           cancelButtonText: '取消',
@@ -183,7 +183,7 @@ export const useStandaloneBookImport = ({
       await reloadShelf()
       ElMessage.success(result.data.data)
     } catch (error) {
-      ElMessage.error(`清空本地数据失败：${getErrorMessage(error)}`)
+      ElMessage.error(`清空数据失败：${getErrorMessage(error)}`)
     }
   }
 

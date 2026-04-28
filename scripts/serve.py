@@ -14,6 +14,8 @@ from pathlib import Path
 
 MAX_SUBSCRIPTION_BYTES = 5 * 1024 * 1024
 SUBSCRIPTION_TIMEOUT_SECONDS = 12
+YIOVE_API_HOSTNAME = "shuyuan-api.yiove.com"
+YIOVE_SITE_ORIGIN = "https://shuyuan.yiove.com"
 
 
 def is_public_hostname(hostname: str) -> bool:
@@ -48,12 +50,22 @@ def validate_subscription_url(raw_url: str) -> str:
 
 
 def fetch_subscription_json(url: str) -> bytes:
+    parsed = urllib.parse.urlparse(url)
+    headers = {
+        "Accept": "application/json, text/plain;q=0.9, */*;q=0.8",
+        "User-Agent": "Mozilla/5.0 Legado-Web/1.0 SourceSubscription",
+    }
+    if parsed.hostname == YIOVE_API_HOSTNAME:
+        headers.update(
+            {
+                "Origin": YIOVE_SITE_ORIGIN,
+                "Referer": f"{YIOVE_SITE_ORIGIN}/",
+            }
+        )
+
     request = urllib.request.Request(
         url,
-        headers={
-            "Accept": "application/json, text/plain;q=0.9, */*;q=0.8",
-            "User-Agent": "Legado-Web/1.0 SourceSubscription",
-        },
+        headers=headers,
     )
     try:
         with urllib.request.urlopen(

@@ -333,6 +333,7 @@ const importSubscription = async () => {
         `订阅源 ${subscription.rssSources.length} 条（新增 ${result.added}，更新 ${result.updated}）`,
       )
     }
+    messages.push(...subscription.notes)
 
     const targetKind =
       subscription.bookSources.length > 0 ? 'bookSource' : 'rssSource'
@@ -344,7 +345,14 @@ const importSubscription = async () => {
     } else {
       store.changeTabName('editList')
     }
-    ElMessage.success(`URL 订阅导入完成：${messages.join('；')}`)
+    const message = `URL 订阅导入完成：${messages.join('；')}`
+    if (subscription.bookSources.length === 0) {
+      ElMessage.warning(
+        `${message}；本次没有导入可搜索书源，书籍搜索仍需要 bookSourceUrl/bookSourceName 书源。`,
+      )
+    } else {
+      ElMessage.success(message)
+    }
   } catch (error) {
     ElMessage.error(`URL 订阅导入失败：${getErrorMessage(error)}`)
   } finally {

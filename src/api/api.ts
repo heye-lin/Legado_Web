@@ -1,4 +1,4 @@
-import standaloneApi from './standalone'
+import serverApi from './server'
 
 export type LegadoApiResponse<T> = {
   isSuccess: boolean
@@ -6,6 +6,6 @@ export type LegadoApiResponse<T> = {
   data: T
 }
 
-export const apiTargetName = '浏览器本地'
+export const apiTargetName = 'PostgreSQL 持久化'
 
-export default standaloneApi
+export default serverApi
