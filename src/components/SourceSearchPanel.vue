@@ -3,7 +3,7 @@
     <div class="source-search-summary-heading">
       <div>
         <strong class="source-search-title">
-          {{ isSearching ? '正在使用书源搜索' : `书源搜索结果：${resultCount} 本` }}
+          {{ isSearching ? '正在使用书源搜索' : resultTitleText }}
         </strong>
         <span class="source-search-keyword">「{{ keyword }}」</span>
         <div v-if="reports.length > 0" class="source-search-subtitle">
@@ -149,6 +149,22 @@ const reportCounts = computed(() =>
   ),
 )
 
+const sourceReports = computed(() =>
+  props.reports.filter(report => report.sourceName !== '系统'),
+)
+
+const successfulSourceCount = computed(
+  () =>
+    sourceReports.value.filter(
+      report => report.status === 'success' && report.count > 0,
+    ).length,
+)
+
+const resultTitleText = computed(() => {
+  if (sourceReports.value.length === 0) return `书源搜索结果：${props.resultCount} 本`
+  return `书源搜索结果：${props.resultCount} 本，${successfulSourceCount.value}/${sourceReports.value.length} 个源成功`
+})
+
 const reportCountItems = computed(() =>
   reportStatusOrder
     .map(status => ({
@@ -243,7 +259,7 @@ const topIssues = computed(() => {
 
 const tipText = computed(() =>
   props.apiTargetName === 'PostgreSQL 持久化'
-    ? '点击卡片在站内预览详情和目录，不再跳转外站；点击“加入书架”会通过生产服务解析详情/目录并保存到 PostgreSQL，阅读章节时按需解析正文并缓存。复杂 JS、登录、CookieJar 和反爬规则仍不支持。'
+    ? '点击卡片可在站内预览详情和目录；点击“加入书架”会通过生产服务解析详情/目录并保存到 PostgreSQL，阅读章节时按需解析正文并缓存。复杂 JS、登录、CookieJar 和反爬规则仍不支持。'
     : `点击卡片需要生产服务在站内预览详情和目录；点击“加入书架”需要生产服务解析详情/目录并保存，当前为${props.apiTargetName}模式，纯静态/浏览器本地降级模式不支持书源结果入库。复杂 JS、登录、CookieJar 和反爬规则仍不支持。`,
 )
 
@@ -336,9 +352,9 @@ const getReportTitle = (report: SourceSearchReport) =>
   max-height: 220px;
   overflow: auto;
   padding: 10px 12px;
-  border: 1px solid rgba(148, 163, 184, 0.18);
+  border: 1px solid var(--shelf-subpanel-border, rgba(148, 163, 184, 0.18));
   border-radius: 12px;
-  background: rgba(248, 250, 252, 0.72);
+  background: var(--shelf-subpanel-bg, rgba(248, 250, 252, 0.72));
 }
 
 .source-search-report-details-header {
@@ -358,7 +374,7 @@ const getReportTitle = (report: SourceSearchReport) =>
   overflow-wrap: anywhere;
 
   & + .source-search-report-detail {
-    border-top: 1px dashed rgba(148, 163, 184, 0.2);
+    border-top: 1px dashed var(--shelf-divider, rgba(148, 163, 184, 0.2));
   }
 }
 
@@ -380,25 +396,12 @@ const getReportTitle = (report: SourceSearchReport) =>
 .source-search-quick-hint {
   padding: 10px 12px;
   border-radius: 12px;
-  background: rgba(230, 162, 60, 0.1);
+  background: var(--shelf-warning-bg, rgba(230, 162, 60, 0.1));
 }
 
 .source-search-report-toggle {
   margin-top: 4px;
   padding-left: 0;
-}
-
-:global(.night) .source-search-report-details {
-  border-color: rgba(148, 163, 184, 0.16);
-  background: rgba(17, 24, 39, 0.42);
-}
-
-:global(.night) .source-search-quick-hint {
-  background: rgba(230, 162, 60, 0.14);
-}
-
-:global(.night) .source-search-report-detail + .source-search-report-detail {
-  border-top-color: rgba(148, 163, 184, 0.14);
 }
 
 @media screen and (max-width: 750px) {

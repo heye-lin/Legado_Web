@@ -74,9 +74,12 @@ export const useSourceSearch = ({
   const sourceSearchDialogVisible = ref(false)
   const sourceSearchInput = ref('')
   const sourceSearchSourceKeyword = ref('')
-  const sourceSearchEnabledFilter = ref<NonNullable<SourceSearchFilter['enabled']>>('enabled')
-  const sourceSearchFeatureFilter = ref<NonNullable<SourceSearchFilter['feature']>>('searchable')
-  const sourceSearchFieldFilter = ref<NonNullable<SourceSearchFilter['field']>>('all')
+  const sourceSearchEnabledFilter =
+    ref<NonNullable<SourceSearchFilter['enabled']>>('enabled')
+  const sourceSearchFeatureFilter =
+    ref<NonNullable<SourceSearchFilter['feature']>>('searchable')
+  const sourceSearchFieldFilter =
+    ref<NonNullable<SourceSearchFilter['field']>>('all')
   const sourceSearchReportsExpanded = ref(false)
   const importingSourceBookKeys = ref(new Set<string>())
   const previewDialogVisible = ref(false)
@@ -99,6 +102,13 @@ export const useSourceSearch = ({
     feature: sourceSearchFeatureFilter.value,
     field: sourceSearchFieldFilter.value,
   }))
+
+  const resetSourceSearchFilters = () => {
+    sourceSearchSourceKeyword.value = ''
+    sourceSearchEnabledFilter.value = 'enabled'
+    sourceSearchFeatureFilter.value = 'searchable'
+    sourceSearchFieldFilter.value = 'all'
+  }
 
   const resetSourceSearchState = () => {
     sourceSearchActive.value = false
@@ -221,7 +231,7 @@ export const useSourceSearch = ({
 
   const openSourceBookPreview = async (book: SourceSearchBook) => {
     if (!isHttpUrl(book.bookUrl)) {
-      ElMessage.warning('书源搜索结果只能打开 http/https 链接')
+      ElMessage.warning('书源搜索结果只支持预览 http/https 详情链接')
       return
     }
     previewSourceBook.value = book
@@ -281,6 +291,7 @@ export const useSourceSearch = ({
     searchBook,
     openSourceSearchDialog,
     confirmSourceSearchDialog,
+    resetSourceSearchFilters,
     clearSourceSearch,
     handleBookImport,
     openSourceBookPreview,

@@ -4,6 +4,7 @@
     class="source-book-preview-dialog"
     width="min(760px, calc(100vw - 32px))"
     :title="dialogTitle"
+    :teleported="false"
   >
     <div v-if="book === undefined" class="preview-empty">
       请选择要预览的书源搜索结果。
@@ -14,14 +15,14 @@
         <div class="preview-cover">
           <img
             :src="coverUrl"
-            :alt="`${displayBook.name} 封面`"
+            :alt="`${bookName} 封面`"
             @error.once="usePlaceholderCover"
           />
         </div>
         <div class="preview-meta">
-          <h3>{{ displayBook.name }}</h3>
+          <h3>{{ bookName }}</h3>
           <div class="preview-subtitle">
-            {{ displayBook.author || '作者未知' }} · {{ book.sourceName }}
+            {{ displayBook?.author || '作者未知' }} · {{ book.sourceName }}
           </div>
           <div class="preview-tags">
             <el-tag v-if="preview?.alreadyOnShelf" type="success" effect="plain">
@@ -30,14 +31,14 @@
             <el-tag v-if="preview" effect="plain">
               共 {{ preview.chapterCount }} 章
             </el-tag>
-            <el-tag v-if="displayBook.kind" effect="plain">
+            <el-tag v-if="displayBook?.kind" effect="plain">
               {{ displayBook.kind }}
             </el-tag>
-            <el-tag v-if="displayBook.wordCount" effect="plain">
+            <el-tag v-if="displayBook?.wordCount" effect="plain">
               {{ displayBook.wordCount }}
             </el-tag>
           </div>
-          <p v-if="displayBook.latestChapterTitle" class="preview-line">
+          <p v-if="displayBook?.latestChapterTitle" class="preview-line">
             最新：{{ displayBook.latestChapterTitle }}
           </p>
           <p v-if="preview?.notes.length" class="preview-line">
@@ -57,7 +58,7 @@
         :title="`预览失败：${errorMessage}`"
       />
       <template v-else-if="preview">
-        <section v-if="displayBook.intro" class="preview-section">
+        <section v-if="displayBook?.intro" class="preview-section">
           <div class="preview-section-title">简介</div>
           <p class="preview-intro">{{ displayBook.intro }}</p>
         </section>
@@ -117,6 +118,7 @@ import type {
   SourceBookPreviewResult,
   SourceSearchBook,
 } from '@/book'
+import { getDisplayCoverUrl, getPlaceholderCover } from '@/utils/bookCover'
 
 const props = defineProps<{
   modelValue: boolean
@@ -137,45 +139,29 @@ const visible = computed({
   set: value => emit('update:modelValue', value),
 })
 
-const displayBook = computed<Book | SourceSearchBook>(
-  () =>
-    props.preview?.book ??
-    props.book ?? {
-      entryType: 'source-search',
-      name: '未知书籍',
-      author: '作者未知',
-      bookUrl: '',
-      kind: '',
-      wordCount: '',
-      sourceName: '',
-      sourceUrl: '',
-      origin: '',
-      originName: '',
-      type: 0,
-      tocUrl: '',
-      resultKey: '',
-      resultIndex: 0,
-      originOrder: 0,
-      weight: 0,
-      searchedAt: 0,
-      time: 0,
-    },
+const displayBook = computed<Book | SourceSearchBook | undefined>(
+  () => props.preview?.book ?? props.book,
 )
+
+const bookName = computed(() => displayBook.value?.name || '未知书籍')
 
 const dialogTitle = computed(() =>
-  props.book === undefined ? '书籍预览' : `预览：${displayBook.value.name}`,
+  props.book === undefined ? '书籍预览' : `预览：${bookName.value}`,
 )
 
-const placeholderCover = computed(() => {
-  const name = displayBook.value?.name || '阅读'
-  const initial = Array.from(name)[0] ?? '书'
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="168" height="224" viewBox="0 0 168 224"><defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#f4d7a1"/><stop offset="1" stop-color="#7aa7d9"/></linearGradient></defs><rect width="168" height="224" rx="12" fill="url(#g)"/><text x="84" y="124" text-anchor="middle" font-size="52" font-family="serif" fill="#fff">${initial}</text></svg>`
-  return `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(svg)}`
-})
+const placeholderCover = computed(() =>
+  getPlaceholderCover(
+    displayBook.value ?? { name: bookName.value },
+    props.book?.sourceName || '书源预览',
+  ),
+)
 
 const coverUrl = computed(() => {
-  const rawCover = displayBook.value?.coverUrl
-  return rawCover ? API.getProxyCoverUrl(rawCover) : placeholderCover.value
+  return getDisplayCoverUrl(
+    displayBook.value?.coverUrl,
+    placeholderCover.value,
+    API.getProxyCoverUrl,
+  )
 })
 
 const usePlaceholderCover = (event: Event) => {
@@ -185,6 +171,28 @@ const usePlaceholderCover = (event: Event) => {
 </script>
 
 <style lang="scss" scoped>
+:global(.source-book-preview-dialog.el-dialog),
+:global(.source-book-preview-dialog .el-dialog) {
+  overflow: hidden;
+  border: 1px solid var(--shelf-panel-border, var(--el-border-color-lighter));
+  border-radius: var(--shelf-radius, 16px);
+  background: var(--shelf-panel-bg, var(--el-bg-color));
+  box-shadow: 0 18px 44px rgba(15, 23, 42, 0.18);
+}
+
+:global(.source-book-preview-dialog .el-dialog__header),
+:global(.source-book-preview-dialog.el-dialog .el-dialog__header),
+:global(.source-book-preview-dialog .el-dialog__footer),
+:global(.source-book-preview-dialog.el-dialog .el-dialog__footer) {
+  border-color: var(--shelf-panel-border, var(--el-border-color-lighter));
+}
+
+:global(.source-book-preview-dialog .el-dialog__title),
+:global(.source-book-preview-dialog.el-dialog .el-dialog__title) {
+  color: var(--shelf-text, var(--el-text-color-primary));
+  font-weight: 700;
+}
+
 .preview-empty,
 .preview-state {
   padding: 28px;
@@ -294,7 +302,8 @@ const usePlaceholderCover = (event: Event) => {
   color: var(--shelf-muted, var(--el-text-color-secondary));
 
   & + .preview-chapter {
-    border-top: 1px dashed rgba(148, 163, 184, 0.22);
+    border-top: 1px dashed
+      var(--shelf-divider, rgba(148, 163, 184, 0.22));
   }
 }
 

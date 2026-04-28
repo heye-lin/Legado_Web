@@ -1,55 +1,15 @@
 <template>
-  <section class="source-filter-panel">
-    <el-input
-      v-model="searchKey"
-      class="search"
-      clearable
-      :prefix-icon="Search"
-      placeholder="筛选源：支持多个关键词，或 name:起点 url:qidian group:小说 rule:bookList"
-      aria-label="筛选源"
-    />
-    <div class="source-filter-row">
-      <el-select v-model="enabledFilter" class="source-filter-select">
-        <el-option label="全部状态" value="all" />
-        <el-option label="仅启用" value="enabled" />
-        <el-option label="仅禁用" value="disabled" />
-      </el-select>
-      <el-select v-model="featureFilter" class="source-filter-select">
-        <el-option label="全部能力" value="all" />
-        <el-option label="可搜索" value="searchable" />
-        <el-option label="不可搜索" value="unsearchable" />
-        <el-option label="CookieJar" value="cookie" />
-        <el-option label="JS/动态规则" value="js" />
-        <el-option label="登录相关" value="login" />
-      </el-select>
-      <el-select v-model="fieldFilter" class="source-filter-select">
-        <el-option label="全字段匹配" value="all" />
-        <el-option label="只搜名称" value="name" />
-        <el-option label="只搜地址" value="url" />
-        <el-option label="只搜分组" value="group" />
-        <el-option label="只搜备注" value="comment" />
-        <el-option label="只搜规则" value="rule" />
-      </el-select>
-      <el-button :icon="RefreshLeft" @click="resetFilters">重置筛选</el-button>
-    </div>
-    <div class="source-filter-summary">
-      <el-tag effect="plain">全部 {{ sources.length }}</el-tag>
-      <el-tag type="success" effect="plain">启用 {{ sourceStats.enabled }}</el-tag>
-      <el-tag type="info" effect="plain">禁用 {{ sourceStats.disabled }}</el-tag>
-      <el-tag type="primary" effect="plain">
-        可搜索 {{ sourceStats.searchable }}
-      </el-tag>
-      <el-tag type="warning" effect="plain">
-        需兼容 {{ sourceStats.complex }}
-      </el-tag>
-      <el-tag v-if="hasActiveFilter" type="primary">
-        当前筛选 {{ sourcesFiltered.length }}
-      </el-tag>
-      <el-tag v-if="sourceUrlSelect.length > 0" type="success">
-        已选 {{ sourceUrlSelect.length }}
-      </el-tag>
-    </div>
-  </section>
+  <source-filter-panel
+    v-model:keyword="searchKey"
+    v-model:enabled="enabledFilter"
+    v-model:feature="featureFilter"
+    v-model:field="fieldFilter"
+    :total="sources.length"
+    :matched="sourcesFiltered.length"
+    :selected="sourceUrlSelect.length"
+    :stats="sourceStats"
+    @reset="resetFilters"
+  />
   <div class="tool">
     <el-button @click="importSourceFile" :icon="Folder">导入 JSON</el-button>
     <el-button
@@ -90,7 +50,7 @@
     暂无源。可使用“URL 订阅”导入订阅地址，或点击“导入 JSON”导入本地源文件。
   </div>
   <div v-else-if="sourcesFiltered.length === 0" class="empty-source-list">
-    没有匹配“{{ searchKey.trim() }}”的源，请调整关键词或清空筛选。
+    没有匹配当前筛选条件的源，请调整关键词或清空筛选。
   </div>
   <el-checkbox-group id="source-list" v-model="sourceUrlSelect">
     <virtual-list
@@ -106,13 +66,7 @@
 
 <script setup lang="ts">
 import API from '@api'
-import {
-  Folder,
-  Delete,
-  Download,
-  Search,
-  RefreshLeft,
-} from '@element-plus/icons-vue'
+import { Folder, Delete, Download } from '@element-plus/icons-vue'
 import {
   getSourceUniqueKey,
   isSourceMatchesAdvanced,
@@ -125,6 +79,7 @@ import {
   type SourceSearchField,
 } from '@utils/source'
 import VirtualList from 'vue3-virtual-scroll-list'
+import SourceFilterPanel from './SourceFilterPanel.vue'
 import SourceItem from './SourceItem.vue'
 import type { Source } from '@/source'
 import { getErrorMessage, selectJsonFile } from '@/utils/jsonFile'
@@ -303,33 +258,6 @@ const outExport = () => {
 </script>
 
 <style lang="scss" scoped>
-.source-filter-panel {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  padding: 12px;
-  border: 1px solid var(--el-border-color-lighter);
-  border-radius: 14px;
-  background: var(--el-bg-color);
-  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.05);
-}
-
-.source-filter-row,
-.source-filter-summary {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-
-  :deep(.el-button + .el-button) {
-    margin-left: 0;
-  }
-}
-
-.source-filter-select {
-  flex: 1 1 120px;
-  min-width: 120px;
-}
-
 .tool {
   display: flex;
   flex-wrap: wrap;

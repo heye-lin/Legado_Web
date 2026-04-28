@@ -81,8 +81,9 @@
 </template>
 <script setup lang="ts">
 import type { Book, SourceSearchBook } from '@/book'
-import { dateFormat, isLegadoUrl } from '../utils/utils'
+import { dateFormat } from '../utils/utils'
 import API from '@api'
+import { getDisplayCoverUrl, getPlaceholderCover } from '@/utils/bookCover'
 
 type BookItem = Book | SourceSearchBook
 
@@ -119,48 +120,25 @@ const getBookActionLabel = (book: BookItem) =>
     ? `预览《${book.name}》的详情和目录`
     : `打开《${book.name}》`
 
-const escapeSvgText = (text: string) =>
-  text.replace(/[&<>"']/g, char => {
-    const entities: Record<string, string> = {
-      '&': '&amp;',
-      '<': '&lt;',
-      '>': '&gt;',
-      '"': '&quot;',
-      "'": '&apos;',
-    }
-    return entities[char]
-  })
-
-const truncateSvgText = (text: string, maxLength: number) => {
-  const chars = Array.from(text.trim())
-  return chars.length > maxLength
-    ? `${chars.slice(0, maxLength).join('')}…`
-    : chars.join('')
-}
-
-const getPlaceholderCover = (book: BookItem) => {
-  const title = escapeSvgText(truncateSvgText(book.name || '阅读', 8))
-  const subtitle = escapeSvgText(
-    truncateSvgText(isSourceSearchBook(book) ? book.sourceName : '本地书籍', 12),
-  )
-  const initial = escapeSvgText(Array.from(book.name || '书')[0] ?? '书')
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="168" height="224" viewBox="0 0 168 224"><defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#f4d7a1"/><stop offset="1" stop-color="#7aa7d9"/></linearGradient></defs><rect width="168" height="224" rx="12" fill="url(#g)"/><text x="84" y="92" text-anchor="middle" font-size="48" font-family="serif" fill="#fff">${initial}</text><text x="84" y="142" text-anchor="middle" font-size="17" font-family="sans-serif" font-weight="700" fill="#fff">${title}</text><text x="84" y="172" text-anchor="middle" font-size="12" font-family="sans-serif" fill="rgba(255,255,255,.82)">${subtitle}</text></svg>`
-  return `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(svg)}`
-}
-
 const getSourceDescription = (book: BookItem) => {
   if (!isSourceSearchBook(book)) return ''
   return [book.kind, book.wordCount].filter(Boolean).join(' · ')
 }
 
 const getCover = (book: BookItem) => {
-  const { coverUrl } = book
-  if (!coverUrl) return getPlaceholderCover(book)
-  return isLegadoUrl(coverUrl) ? API.getProxyCoverUrl(coverUrl) : coverUrl
+  const subtitle = isSourceSearchBook(book) ? book.sourceName : '本地书籍'
+  return getDisplayCoverUrl(
+    book.coverUrl,
+    getPlaceholderCover(book, subtitle),
+    API.getProxyCoverUrl,
+  )
 }
 const proxyImage = (evt: Event, book: BookItem) => {
   const target = evt.target as HTMLImageElement
-  target.src = getPlaceholderCover(book)
+  target.src = getPlaceholderCover(
+    book,
+    isSourceSearchBook(book) ? book.sourceName : '本地书籍',
+  )
 }
 </script>
 

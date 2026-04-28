@@ -2852,10 +2852,11 @@ const sourceFilterFieldAlias = {
 
 const sourceFilterTokenMatches = (source, token, defaultField) => {
   const match = token.match(/^([^:：]+)[:：](.+)$/)
-  const field = match?.[1] ? sourceFilterFieldAlias[match[1]] : defaultField
-  const keyword = match?.[2] ?? token
+  const aliasedField = match?.[1] ? sourceFilterFieldAlias[match[1]] : undefined
+  const field = aliasedField ?? defaultField
+  const keyword = aliasedField ? match?.[2] : token
   if (!keyword) return true
-  return sourceFilterTexts(source)[field ?? defaultField].some(value =>
+  return sourceFilterTexts(source)[field].some(value =>
     normalizeSearchText(value).includes(keyword),
   )
 }
@@ -2871,6 +2872,34 @@ const sourceMatchesSearchFilter = (source, filter) => {
     .filter(Boolean)
   return tokens.every(token => sourceFilterTokenMatches(source, token, field))
 }
+
+const scoreSourceSearchBook = (keyword, book) => {
+  const tokens = normalizeSearchText(keyword).split(/\s+/).filter(Boolean)
+  const name = normalizeSearchText(book.name)
+  const author = normalizeSearchText(book.author)
+  const kind = normalizeSearchText(book.kind)
+  const intro = normalizeSearchText(book.intro)
+  const latest = normalizeSearchText(book.latestChapterTitle)
+  return tokens.reduce((score, token) => {
+    if (!token) return score
+    if (name === token) return score + 1000
+    if (name.startsWith(token)) return score + 760
+    if (name.includes(token)) return score + 560
+    if (author === token) return score + 260
+    if (author.includes(token)) return score + 180
+    if (kind.includes(token)) return score + 90
+    if (latest.includes(token)) return score + 70
+    if (intro.includes(token)) return score + 40
+    return score
+  }, 0)
+}
+
+const compareSourceSearchBooks = keyword => (left, right) =>
+  scoreSourceSearchBook(keyword, right) - scoreSourceSearchBook(keyword, left) ||
+  (left.originOrder ?? 0) - (right.originOrder ?? 0) ||
+  (right.weight ?? 0) - (left.weight ?? 0) ||
+  (left.resultIndex ?? 0) - (right.resultIndex ?? 0) ||
+  String(left.name).localeCompare(String(right.name))
 
 const searchBookSources = async (keyword, sourceFilter = {}) => {
   const searchKey = keyword.trim()
@@ -2899,18 +2928,20 @@ const searchBookSources = async (keyword, sourceFilter = {}) => {
       message: `已按书源筛选条件搜索 ${filteredSources.length}/${sources.length} 个书源，跳过 ${sources.length - filteredSources.length} 个`,
     })
   }
-  let truncatedCount = 0
   results.forEach(result => {
     reports.push(result.report)
     result.books.forEach(book => {
       if (bookMap.has(book.resultKey)) return
-      if (bookMap.size >= SOURCE_SEARCH_TOTAL_RESULT_LIMIT) {
-        truncatedCount += 1
-        return
-      }
       bookMap.set(book.resultKey, book)
     })
   })
+  const sortedBooks = Array.from(bookMap.values()).sort(
+    compareSourceSearchBooks(searchKey),
+  )
+  const truncatedCount = Math.max(
+    0,
+    sortedBooks.length - SOURCE_SEARCH_TOTAL_RESULT_LIMIT,
+  )
   if (truncatedCount > 0) {
     reports.push({
       sourceName: '系统',
@@ -2921,7 +2952,10 @@ const searchBookSources = async (keyword, sourceFilter = {}) => {
     })
   }
 
-  return { books: Array.from(bookMap.values()), reports }
+  return {
+    books: sortedBooks.slice(0, SOURCE_SEARCH_TOTAL_RESULT_LIMIT),
+    reports,
+  }
 }
 
 const isSourceSearchBookPayload = value =>

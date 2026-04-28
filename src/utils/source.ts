@@ -83,6 +83,37 @@ export type SourceFeatureFilter =
   | 'js'
   | 'login'
 export type SourceSearchField = 'all' | 'name' | 'url' | 'group' | 'comment' | 'rule'
+export type SourceFilterOption<T extends string> = {
+  label: string
+  value: T
+}
+
+export const SOURCE_ENABLED_FILTER_OPTIONS: readonly SourceFilterOption<SourceEnabledFilter>[] =
+  [
+    { label: '全部状态', value: 'all' },
+    { label: '仅启用', value: 'enabled' },
+    { label: '仅禁用', value: 'disabled' },
+  ]
+
+export const SOURCE_FEATURE_FILTER_OPTIONS: readonly SourceFilterOption<SourceFeatureFilter>[] =
+  [
+    { label: '全部能力', value: 'all' },
+    { label: '可搜索', value: 'searchable' },
+    { label: '不可搜索', value: 'unsearchable' },
+    { label: 'CookieJar', value: 'cookie' },
+    { label: 'JS/动态规则', value: 'js' },
+    { label: '登录相关', value: 'login' },
+  ]
+
+export const SOURCE_SEARCH_FIELD_OPTIONS: readonly SourceFilterOption<SourceSearchField>[] =
+  [
+    { label: '全字段匹配', value: 'all' },
+    { label: '只搜名称', value: 'name' },
+    { label: '只搜地址', value: 'url' },
+    { label: '只搜分组', value: 'group' },
+    { label: '只搜备注', value: 'comment' },
+    { label: '只搜规则', value: 'rule' },
+  ]
 
 export type SourceMatchOptions = {
   enabled?: SourceEnabledFilter
@@ -245,9 +276,9 @@ const tokenMatchesSource = (
   defaultField: SourceSearchField,
 ) => {
   const fieldMatch = token.match(/^([^:：]+)[:：](.+)$/)
-  const field = fieldMatch?.[1] ? fieldAlias[fieldMatch[1]] : defaultField
-  const keyword = fieldMatch?.[2] ?? token
-  const targetField = field ?? defaultField
+  const aliasedField = fieldMatch?.[1] ? fieldAlias[fieldMatch[1]] : undefined
+  const targetField = aliasedField ?? defaultField
+  const keyword = aliasedField ? fieldMatch?.[2] : token
   if (!keyword) return true
   return getSourceFieldTexts(source)[targetField].some(value =>
     normalizeSearchText(value).includes(keyword),

@@ -228,66 +228,18 @@
         <div class="drag-import-description">{{ dragImportDescription }}</div>
       </div>
     </div>
-    <el-dialog
+    <source-search-dialog
       v-model="sourceSearchDialogVisible"
-      title="书源搜索"
-      width="min(420px, calc(100vw - 32px))"
-    >
-      <div class="source-search-dialog">
-        <p>
-          从已导入并启用的书源中搜索书籍。生产服务支持将结果加入书架；未导入书源时，请先进入书源管理。
-        </p>
-        <el-input
-          v-model="sourceSearchInput"
-          placeholder="输入书名、作者或关键词"
-          :prefix-icon="SearchIcon"
-          aria-label="输入书名、作者或关键词进行书源搜索"
-          @keyup.enter="confirmSourceSearchDialog"
-        />
-        <div class="source-search-filter-grid">
-          <el-input
-            v-model="sourceSearchSourceKeyword"
-            clearable
-            placeholder="筛选参与搜索的书源，例如 起点、group:小说、url:qidian"
-            aria-label="筛选参与搜索的书源"
-          />
-          <el-select v-model="sourceSearchEnabledFilter">
-            <el-option label="仅启用书源" value="enabled" />
-            <el-option label="全部状态" value="all" />
-            <el-option label="仅禁用" value="disabled" />
-          </el-select>
-          <el-select v-model="sourceSearchFeatureFilter">
-            <el-option label="仅可搜索" value="searchable" />
-            <el-option label="全部能力" value="all" />
-            <el-option label="不可搜索" value="unsearchable" />
-            <el-option label="CookieJar" value="cookie" />
-            <el-option label="JS/动态规则" value="js" />
-            <el-option label="登录相关" value="login" />
-          </el-select>
-          <el-select v-model="sourceSearchFieldFilter">
-            <el-option label="全字段匹配" value="all" />
-            <el-option label="只搜名称" value="name" />
-            <el-option label="只搜地址" value="url" />
-            <el-option label="只搜分组" value="group" />
-            <el-option label="只搜备注" value="comment" />
-            <el-option label="只搜规则" value="rule" />
-          </el-select>
-        </div>
-      </div>
-      <template #footer>
-        <el-button @click="sourceSearchDialogVisible = false">取消</el-button>
-        <el-button @click="openBookSourceManager">
-          书源管理
-        </el-button>
-        <el-button
-          type="primary"
-          :loading="isSearchingSources"
-          @click="confirmSourceSearchDialog"
-        >
-          开始搜索
-        </el-button>
-      </template>
-    </el-dialog>
+      v-model:keyword="sourceSearchInput"
+      v-model:source-keyword="sourceSearchSourceKeyword"
+      v-model:enabled="sourceSearchEnabledFilter"
+      v-model:feature="sourceSearchFeatureFilter"
+      v-model:field="sourceSearchFieldFilter"
+      :loading="isSearchingSources"
+      @confirm="confirmSourceSearchDialog"
+      @manage="openBookSourceManager"
+      @reset-filters="resetSourceSearchFilters"
+    />
     <source-book-preview-dialog
       v-model="previewDialogVisible"
       :book="previewSourceBook"
@@ -308,6 +260,7 @@
 import '@/assets/bookshelf.css'
 import '@/assets/fonts/shelffont.css'
 import SourceBookPreviewDialog from '@/components/SourceBookPreviewDialog.vue'
+import SourceSearchDialog from '@/components/SourceSearchDialog.vue'
 import SourceSearchPanel from '@/components/SourceSearchPanel.vue'
 import { useBookStore } from '@/store'
 import githubUrl from '@/assets/imgs/github.png'
@@ -380,6 +333,7 @@ const {
   searchBook,
   openSourceSearchDialog,
   confirmSourceSearchDialog,
+  resetSourceSearchFilters,
   clearSourceSearch,
   handleBookImport,
   openSourceBookPreview,
@@ -548,6 +502,10 @@ onUnmounted(
   --shelf-muted: #606975;
   --shelf-soft-muted: #8a94a3;
   --shelf-radius: 16px;
+  --shelf-subpanel-bg: rgba(248, 250, 252, 0.72);
+  --shelf-subpanel-border: rgba(148, 163, 184, 0.18);
+  --shelf-warning-bg: rgba(230, 162, 60, 0.1);
+  --shelf-divider: rgba(148, 163, 184, 0.2);
 
   height: 100%;
   width: 100%;
@@ -679,25 +637,6 @@ onUnmounted(
     display: none;
   }
 
-  .source-search-dialog {
-    p {
-      margin: 0 0 14px;
-      color: var(--shelf-muted);
-      line-height: 1.7;
-    }
-
-    .source-search-filter-grid {
-      display: grid;
-      grid-template-columns: repeat(3, minmax(0, 1fr));
-      gap: 10px;
-      margin-top: 12px;
-
-      > :first-child {
-        grid-column: 1 / -1;
-      }
-    }
-  }
-
   .shelf-wrapper {
     position: relative;
     padding: 48px 48px;
@@ -745,6 +684,10 @@ onUnmounted(
       display: flex;
       flex-wrap: wrap;
       gap: 10px;
+
+      :deep(.el-button + .el-button) {
+        margin-left: 0;
+      }
     }
 
     .shelf-feature-actions {
@@ -846,14 +789,6 @@ onUnmounted(
 
 @media screen and (max-width: 750px) {
   .index-wrapper {
-    .source-search-dialog {
-      .source-search-filter-grid {
-        grid-template-columns: 1fr;
-      }
-    }
-  }
-
-  .index-wrapper {
     overflow-x: hidden;
     flex-direction: column;
 
@@ -948,6 +883,10 @@ onUnmounted(
   --shelf-text: #d7dbe0;
   --shelf-muted: #a0a7b0;
   --shelf-soft-muted: #7f8792;
+  --shelf-subpanel-bg: rgba(17, 24, 39, 0.42);
+  --shelf-subpanel-border: rgba(148, 163, 184, 0.16);
+  --shelf-warning-bg: rgba(230, 162, 60, 0.14);
+  --shelf-divider: rgba(148, 163, 184, 0.14);
 
   .navigation-wrapper {
     background:
