@@ -434,6 +434,7 @@ const sourceSearchReportMeta: Record<
   failed: { label: '请求/解析失败', type: 'danger' },
   unsupported: { label: '规则不支持', type: 'warning' },
   skipped: { label: '已跳过', type: 'info' },
+  truncated: { label: '结果截断', type: 'info' },
 }
 const sourceSearchReportStatusOrder: SourceSearchReport['status'][] = [
   'success',
@@ -441,6 +442,7 @@ const sourceSearchReportStatusOrder: SourceSearchReport['status'][] = [
   'failed',
   'unsupported',
   'skipped',
+  'truncated',
 ]
 const sourceSearchReportCountItems = computed(() =>
   sourceSearchReportStatusOrder

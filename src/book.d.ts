@@ -87,7 +87,13 @@ export type SourceSearchBook = BaseBook & {
 export type SourceSearchReport = {
   sourceName: string
   sourceUrl: string
-  status: 'success' | 'empty' | 'skipped' | 'unsupported' | 'failed'
+  status:
+    | 'success'
+    | 'empty'
+    | 'skipped'
+    | 'unsupported'
+    | 'failed'
+    | 'truncated'
   count: number
   message: string
 }

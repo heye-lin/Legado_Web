@@ -82,6 +82,8 @@ const COMPLEX_LEGADO_RULE_PATTERN =
   /(^\s*(js:|@js:|xpath:|@xpath:|regex:)|@js\b|<js>|java\.|source\.getVariable|source\.setVariable)/i
 const COMPLEX_SEARCH_URL_PATTERN =
   /(^\s*(@?js:|<js>)|<js>|java\.ajax|java\.|source\.getVariable|source\.setVariable|buildRequest\()/i
+const EMBEDDED_RULE_TEMPLATE_PATTERN = /\{\{\s*@@([\s\S]*?)\}\}/g
+const STATIC_JS_BLOCK_PATTERN = /<js>([\s\S]*?)<\/js>/i
 const SELECTOR_INDEX_PATTERN = /^(.*)\.(-?\d+)(?::(-?\d+))?$/
 const BRACKET_SELECTOR_INDEX_PATTERN = /^(.*)\[(-?\d+)\]$/
 const SELECTOR_EXCLUSION_PATTERN = /^(.*)!(-?\d+)(?::(-?\d+))?$/
@@ -1361,9 +1363,16 @@ const parseSourceHeaders = (rawHeader, options) => {
   return { headers, warnings: unique(warnings) }
 }
 
-const fillSearchKey = (template, searchKey, { encodeKey = true } = {}) => {
+const fillSearchKey = (
+  template,
+  searchKey,
+  { encodeKey = true, sourceBaseUrl = '' } = {},
+) => {
   const renderedKey = encodeKey ? encodeURIComponent(searchKey) : searchKey
+  const normalizedSourceBaseUrl = sourceBaseUrl.replace(/\/+$/, '')
   return template
+    .replace(/\{\{\s*(?:ho|source\.key)\s*\}\}/gi, normalizedSourceBaseUrl)
+    .replace(/\{\{\s*source\.bookSourceUrl\s*\}\}/gi, normalizedSourceBaseUrl)
     .replace(/\{\{\s*(?:key|keyword|searchKey)\s*\}\}/gi, renderedKey)
     .replace(/\{\{\s*\(?\s*(?:page|searchPage)\s*-\s*1\s*\)?\s*\}\}/gi, '0')
     .replace(/\{\{\s*\(?\s*page\s*-\s*1\s*\)?\s*\*\s*\d+\s*\}\}/gi, '0')
@@ -1378,6 +1387,7 @@ const fillSearchPage = template =>
 
 const isSupportedSearchTemplateExpression = expression =>
   /^(?:key|keyword|searchKey|page|searchPage)$/i.test(expression) ||
+  /^(?:ho|source\.key|source\.bookSourceUrl)$/i.test(expression) ||
   /^\(?\s*(?:page|searchPage)\s*-\s*1\s*\)?$/i.test(expression) ||
   /^\(?\s*page\s*-\s*1\s*\)?\s*\*\s*\d+$/i.test(expression)
 
@@ -1438,18 +1448,21 @@ const renderSearchTemplateValue = (value, searchKey, options) => {
   return value
 }
 
-const serializeSearchBody = (body, searchKey) => {
+const serializeSearchBody = (body, searchKey, options = {}) => {
   if (typeof body === 'string') {
     return {
       contentType: 'application/x-www-form-urlencoded;charset=UTF-8',
-      body: fillSearchKey(body, searchKey),
+      body: fillSearchKey(body, searchKey, options),
     }
   }
   if (isRecord(body) || Array.isArray(body)) {
     return {
       contentType: 'application/json;charset=UTF-8',
       body: JSON.stringify(
-        renderSearchTemplateValue(body, searchKey, { encodeKey: false }),
+        renderSearchTemplateValue(body, searchKey, {
+          ...options,
+          encodeKey: false,
+        }),
       ),
     }
   }
@@ -1468,8 +1481,9 @@ const buildSourceSearchRequest = (source, searchKey) => {
   if (!searchUrl) throw new Error('未配置搜索地址')
 
   const { url, body, config } = splitSearchUrl(searchUrl)
+  const templateOptions = { sourceBaseUrl: source.bookSourceUrl }
   const requestUrl = new URL(
-    fillSearchKey(url, searchKey),
+    fillSearchKey(url, searchKey, templateOptions),
     source.bookSourceUrl,
   ).toString()
   const { headers, warnings } = parseSourceHeaders(source.header, {
@@ -1484,6 +1498,7 @@ const buildSourceSearchRequest = (source, searchKey) => {
       } else {
         headers[normalizedKey] = fillSearchKey(value, searchKey, {
           encodeKey: false,
+          sourceBaseUrl: source.bookSourceUrl,
         })
       }
     })
@@ -1503,7 +1518,7 @@ const buildSourceSearchRequest = (source, searchKey) => {
       : method === 'GET'
         ? 'GET'
         : 'POST'
-  const serializedBody = serializeSearchBody(body, searchKey)
+  const serializedBody = serializeSearchBody(body, searchKey, templateOptions)
   applyDefaultSourceSearchHeaders(headers, requestUrl, requestMethod)
 
   if (requestMethod === 'GET') {
@@ -1590,6 +1605,117 @@ const applyRuleReplacements = (value, replacements) => {
     if (index + 1 < replacements.length) index += 1
   }
   return text
+}
+
+const decodeStaticRuleString = value =>
+  String(value ?? '')
+    .replace(/\\\//g, '/')
+    .replace(/\\(["'\\])/g, '$1')
+    .replace(/\\n/g, '\n')
+    .replace(/\\r/g, '\r')
+    .replace(/\\t/g, '\t')
+
+const splitStaticResultTransformRule = rule => {
+  const text = String(rule ?? '').trim()
+  const blockMatch = text.match(STATIC_JS_BLOCK_PATTERN)
+  if (blockMatch !== null && blockMatch.index !== undefined) {
+    return {
+      baseRule: text.slice(0, blockMatch.index).trim(),
+      script: blockMatch[1],
+    }
+  }
+
+  const inlineMatch = text.match(/@js\s*:/i)
+  if (inlineMatch === null || inlineMatch.index === undefined) return undefined
+  if (inlineMatch.index === 0) return undefined
+  return {
+    baseRule: text.slice(0, inlineMatch.index).trim(),
+    script: text.slice(inlineMatch.index + inlineMatch[0].length),
+  }
+}
+
+const readStaticReplaceChain = (chain, value) => {
+  let rest = chain.trim()
+  let text = value
+  let count = 0
+
+  while (rest) {
+    const match = rest.match(
+      /^\.replace\(\s*(['"])((?:\\.|(?!\1)[\s\S])*?)\1\s*,\s*(['"])((?:\\.|(?!\3)[\s\S])*?)\3\s*\)/,
+    )
+    if (match === null) return undefined
+    text = text.replace(
+      decodeStaticRuleString(match[2]),
+      decodeStaticRuleString(match[4]),
+    )
+    rest = rest.slice(match[0].length).trim()
+    count += 1
+  }
+
+  return count > 0 ? text : undefined
+}
+
+const applyStaticResultTransform = (value, script) => {
+  const statements = String(script ?? '')
+    .replace(/\/\/.*$/gm, '')
+    .split(/;|\r?\n/)
+    .map(item => item.trim())
+    .filter(Boolean)
+  if (statements.length === 0) return undefined
+
+  let variable = 'result'
+  let text = value
+  let transformed = false
+
+  for (const statement of statements) {
+    const variableMatch = statement.match(
+      /^(?:var|let|const)\s+([A-Za-z_$][\w$]*)\s*=\s*result$/,
+    )
+    if (variableMatch !== null) {
+      variable = variableMatch[1]
+      continue
+    }
+
+    if (statement === variable || statement === 'result') continue
+
+    const escapedVariable = variable.replace(
+      /[.*+?^${}()|[\]\\]/g,
+      '\\$&',
+    )
+    const assignMatch = statement.match(
+      new RegExp(
+        `^${escapedVariable}\\s*=\\s*(?:${escapedVariable}|result)([\\s\\S]+)$`,
+      ),
+    )
+    const chainMatch =
+      assignMatch?.[1] ??
+      statement.match(
+        new RegExp(`^(?:${escapedVariable}|result)([\\s\\S]+)$`),
+      )?.[1]
+
+    if (chainMatch === undefined) return undefined
+    const nextText = readStaticReplaceChain(chainMatch, text)
+    if (nextText === undefined) return undefined
+    text = nextText
+    transformed = true
+  }
+
+  return transformed ? text : undefined
+}
+
+const sourceBaseUrlFromPage = baseUrl => {
+  try {
+    return new URL(baseUrl).origin.replace(/\/+$/, '')
+  } catch {
+    return ''
+  }
+}
+
+const renderRuleSourceTemplates = (value, baseUrl) => {
+  const sourceBaseUrl = sourceBaseUrlFromPage(baseUrl)
+  return String(value ?? '')
+    .replace(/\{\{\s*(?:ho|source\.key)\s*\}\}/gi, sourceBaseUrl)
+    .replace(/\{\{\s*source\.bookSourceUrl\s*\}\}/gi, sourceBaseUrl)
 }
 
 const normalizeRuleText = value => {
@@ -1763,22 +1889,78 @@ const readSingleRuleValue = ($, scope, rule, baseUrl) => {
   return applyRuleReplacements(attrValue, parsedRule.replacements)
 }
 
+const readSingleRuleValueWithStaticTransform = ($, scope, rule, baseUrl) => {
+  const transform = splitStaticResultTransformRule(rule)
+  if (transform === undefined) return readSingleRuleValue($, scope, rule, baseUrl)
+  if (!transform.baseRule) throw new Error('静态 JS 规则缺少基础选择器')
+
+  const value = readSingleRuleValue($, scope, transform.baseRule, baseUrl)
+  if (!value) return ''
+
+  const transformed = applyStaticResultTransform(value, transform.script)
+  if (transformed === undefined) {
+    throw new Error('静态 JS 结果转换只支持 result.replace 字符串替换')
+  }
+  return transformed
+}
+
+const hasEmbeddedRuleTemplate = rule =>
+  /\{\{\s*@@[\s\S]*?\}\}/.test(String(rule ?? ''))
+
+const readEmbeddedRuleTemplateValue = ($, scope, rule, baseUrl) => {
+  EMBEDDED_RULE_TEMPLATE_PATTERN.lastIndex = 0
+  const rendered = String(rule ?? '')
+    .trim()
+    .replace(EMBEDDED_RULE_TEMPLATE_PATTERN, (_, innerRule) =>
+      readRuleValue($, scope, innerRule.trim(), baseUrl),
+    )
+  const [ruleBody, ...replacements] = rendered.split('##')
+  return applyRuleReplacements(
+    ruleBody.trim(),
+    replacements.filter(Boolean),
+  )
+}
+
 const readRuleValue = ($, scope, rule, baseUrl) => {
   const trimmed = rule?.trim()
   if (!trimmed) return ''
+  if (hasEmbeddedRuleTemplate(trimmed)) {
+    return renderRuleSourceTemplates(
+      readEmbeddedRuleTemplateValue($, scope, trimmed, baseUrl),
+      baseUrl,
+    )
+  }
 
   const [ruleBody, ...replacements] = trimmed.split('##')
-  for (const alternative of splitRuleAlternatives(ruleBody)) {
-    const value = splitRuleConjunctions(alternative)
-      .map(part => readSingleRuleValue($, scope, part, baseUrl))
-      .filter(Boolean)
-      .join(' ')
-    const normalizedValue = applyRuleReplacements(
-      value.trim(),
-      replacements.filter(Boolean),
+  if (!ruleBody.trim() && replacements.length > 0) {
+    return renderRuleSourceTemplates(
+      applyRuleReplacements(
+        scope.html()?.trim() ?? '',
+        replacements.filter(Boolean),
+      ),
+      baseUrl,
     )
-    if (normalizedValue) return normalizedValue
   }
+
+  let lastError
+  for (const alternative of splitRuleAlternatives(ruleBody)) {
+    try {
+      const value = splitRuleConjunctions(alternative)
+        .map(part =>
+          readSingleRuleValueWithStaticTransform($, scope, part, baseUrl),
+        )
+        .filter(Boolean)
+        .join(' ')
+      const normalizedValue = renderRuleSourceTemplates(
+        applyRuleReplacements(value.trim(), replacements.filter(Boolean)),
+        baseUrl,
+      )
+      if (normalizedValue) return normalizedValue
+    } catch (error) {
+      lastError = error
+    }
+  }
+  if (lastError !== undefined) throw lastError
   return ''
 }
 
@@ -1813,6 +1995,7 @@ const splitRuleConjunctions = rule =>
 const selectBookListNodes = ($, listRule) => {
   let lastError
   for (const alternative of splitRuleAlternatives(listRule)) {
+    if (isJsonAccessorRule(alternative)) continue
     try {
       const nodes = alternative
         .split('@')
@@ -2142,6 +2325,31 @@ const isComplexLegadoRule = rule => {
   return COMPLEX_LEGADO_RULE_PATTERN.test(rule ?? '')
 }
 
+const isSupportedStaticResultTransformRule = rule => {
+  const transform = splitStaticResultTransformRule(rule)
+  return (
+    transform !== undefined &&
+    Boolean(transform.baseRule) &&
+    applyStaticResultTransform('__probe__', transform.script) !== undefined
+  )
+}
+
+const isSupportedSearchRulePart = rule =>
+  !isComplexLegadoRule(rule) || isSupportedStaticResultTransformRule(rule)
+
+const isSupportedSearchRuleAlternative = rule =>
+  splitRuleConjunctions(rule).every(isSupportedSearchRulePart)
+
+const hasSupportedSearchRulePath = rule => {
+  const text = String(rule ?? '').trim()
+  if (hasEmbeddedRuleTemplate(text)) return true
+  const [ruleBody] = text.split('##')
+  if (!ruleBody.trim() && text.startsWith('##')) return true
+  if (!ruleBody) return false
+  if (isJsonPathCompoundRule(stripJsonVariableOperators(ruleBody))) return true
+  return splitRuleAlternatives(ruleBody).some(isSupportedSearchRuleAlternative)
+}
+
 const buildSourceSearchBook = ($, source, node, baseUrl, index) => {
   const rule = source.ruleSearch ?? {}
   const scope = $(node)
@@ -2357,24 +2565,18 @@ const searchSingleBookSource = async (source, searchKey) => {
     }
   }
 
-  const complexRule = [
+  const unsupportedRequiredRule = [
     listRule,
     ruleSearch.name,
-    ruleSearch.author,
-    ruleSearch.kind,
-    ruleSearch.wordCount,
-    ruleSearch.lastChapter,
-    ruleSearch.intro,
-    ruleSearch.coverUrl,
     ruleSearch.bookUrl,
-  ].find(isComplexLegadoRule)
-  if (complexRule !== undefined) {
+  ].find(rule => !hasSupportedSearchRulePath(rule))
+  if (unsupportedRequiredRule !== undefined) {
     return {
       books: [],
       report: sourceSearchReport(
         searchableSource,
         'unsupported',
-        `规则「${complexRule}」超出当前 Web 搜索支持范围`,
+        `规则「${unsupportedRequiredRule}」超出当前 Web 搜索支持范围`,
       ),
     }
   }
@@ -2513,7 +2715,7 @@ const searchBookSources = async keyword => {
     reports.push({
       sourceName: '系统',
       sourceUrl: '',
-      status: 'skipped',
+      status: 'truncated',
       count: truncatedCount,
       message: `搜索结果已限制为 ${SOURCE_SEARCH_TOTAL_RESULT_LIMIT} 条，另有 ${truncatedCount} 条未返回`,
     })
@@ -2677,13 +2879,7 @@ const fetchSourcePageText = async (
   }
 }
 
-const decodeStaticJsString = value =>
-  String(value ?? '')
-    .replace(/\\\//g, '/')
-    .replace(/\\(["'\\])/g, '$1')
-    .replace(/\\n/g, '\n')
-    .replace(/\\r/g, '\r')
-    .replace(/\\t/g, '\t')
+const decodeStaticJsString = decodeStaticRuleString
 
 const parseStaticObjectParams = objectText => {
   const params = new URLSearchParams()
