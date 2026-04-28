@@ -574,6 +574,7 @@ onUnmounted(() => {
   popCataVisible.value = false
   scrollObserver?.disconnect()
   scrollObserver = null
+  jump.cancel()
   if (toShelfTimer !== undefined) clearTimeout(toShelfTimer)
 })
 

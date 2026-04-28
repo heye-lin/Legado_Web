@@ -10,6 +10,7 @@ declare module 'vue' {
     BookItems: typeof import('./components/BookItems.vue')['default']
     CatalogItem: typeof import('./components/CatalogItem.vue')['default']
     ChapterContent: typeof import('./components/ChapterContent.vue')['default']
+    ElAlert: typeof import('element-plus/es')['ElAlert']
     ElButton: typeof import('element-plus/es')['ElButton']
     ElCheckbox: typeof import('element-plus/es')['ElCheckbox']
     ElCheckboxGroup: typeof import('element-plus/es')['ElCheckboxGroup']

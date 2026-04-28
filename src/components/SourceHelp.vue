@@ -2,35 +2,14 @@
 import { Link } from '@element-plus/icons-vue'
 </script>
 <template>
-  <el-link :icon="Link" href="/help/#appHelp" target="_blank"
-    >Legado 规则帮助</el-link
-  ><br />
-  <el-link :icon="Link" href="/help/#ruleHelp" target="_blank"
-    >书源制作教程</el-link
-  ><br />
-  <el-link :icon="Link" href="/help/#jsHelp" target="_blank"
-    >JS 变量和函数</el-link
-  ><br />
-  <el-link :icon="Link" href="/help/#xpathHelp" target="_blank"
-    >XPath 语法教程</el-link
-  ><br />
-  <el-link :icon="Link" href="/help/#regexHelp" target="_blank"
-    >正则表达式教程</el-link
-  ><br />
-  <el-link :icon="Link" href="/help/#txtTocRuleHelp" target="_blank"
-    >TXT 目录正则说明</el-link
-  ><br />
-  <el-link :icon="Link" href="/help/#debugHelp" target="_blank"
-    >书源调试说明</el-link
-  ><br />
-  <el-link :icon="Link" href="/help/#httpTTSHelp" target="_blank"
-    >在线朗读规则</el-link
-  ><br />
-  <el-link :icon="Link" href="/help/#webDavBookHelp" target="_blank">
-    WebDAV 书籍简明使用教程</el-link
-  ><br />
-  <el-link :icon="Link" href="/help/#webDavHelp" target="_blank">
-    WebDAV 备份教程</el-link
+  <el-alert
+    title="纯 Web 版当前保留 Legado 源配置编辑和本地保存能力；完整远程抓取等原生端能力不在浏览器本地模式内直接提供。"
+    type="info"
+    :closable="false"
+    show-icon
+  />
+  <el-link :icon="Link" href="https://github.com/gedoor/legado" target="_blank">
+    Legado 原项目规则参考</el-link
   ><br />
   <el-link :icon="Link" href="https://regexr-cn.com/" target="_blank"
     >正则表达式在线验证工具</el-link

@@ -28,6 +28,7 @@ const jumper = () => {
   let next // next scroll position                   (px)
 
   let callback // to call when done scrolling            (function)
+  let animationFrameId // current rAF id                  (number)
 
   // scroll position helper
 
@@ -75,13 +76,15 @@ const jumper = () => {
 
     // check progress
     timeElapsed < duration
-      ? requestAnimationFrame(loop) // continue scroll loop
+      ? (animationFrameId = requestAnimationFrame(loop)) // continue scroll loop
       : done() // scrolling is done
   }
 
   // scroll finished helper
 
   function done() {
+    animationFrameId = undefined
+
     // account for rAF time rounding inaccuracies
     scrollTo(start + distance)
 
@@ -103,9 +106,20 @@ const jumper = () => {
     timeStart = false
   }
 
+  function cancel() {
+    if (animationFrameId !== undefined) {
+      cancelAnimationFrame(animationFrameId)
+      animationFrameId = undefined
+    }
+
+    timeStart = false
+  }
+
   // API
 
   function jump(target, options = {}) {
+    cancel()
+
     // resolve options, or use defaults
     duration = options.duration || 1000
     offset = options.offset || 0
@@ -172,10 +186,11 @@ const jumper = () => {
     }
 
     // start the loop
-    requestAnimationFrame(loop)
+    animationFrameId = requestAnimationFrame(loop)
   }
 
-  // expose only the jump method
+  jump.cancel = cancel
+
   return jump
 }
 
@@ -183,4 +198,5 @@ const jumper = () => {
 
 const singleton = jumper()
 
+export const cancel = singleton.cancel
 export default singleton

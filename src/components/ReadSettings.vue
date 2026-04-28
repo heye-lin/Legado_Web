@@ -249,31 +249,30 @@ const loadFontFromURL = () => {
     cancelButtonText: '取消',
     inputPattern: /^https?:.+$/,
     inputErrorMessage: 'URL 格式不正确',
-    beforeClose: (action, instance, done) => {
+    beforeClose: async (action, instance, done) => {
       if (action === 'confirm') {
         instance.confirmButtonLoading = true
         instance.confirmButtonText = '下载中……'
-        // instance.inputValue
         const url = instance.inputValue
         if (typeof FontFace !== 'function') {
+          instance.confirmButtonLoading = false
+          instance.confirmButtonText = '确定'
           ElMessage.error('浏览器不支持 FontFace')
           return done()
         }
-        const fontface = new FontFace(customFontName.value, `url("${url}")`)
-        document.fonts.add(fontface)
-        fontface
-          .load()
-          .then(function () {
-            instance.confirmButtonLoading = false
-            ElMessage.info('字体加载成功！')
-            setCustomFont()
-            done()
-          })
-          .catch(function () {
-            instance.confirmButtonLoading = false
-            instance.confirmButtonText = '确定'
-            ElMessage.error('下载失败，请检查您输入的 URL')
-          })
+        try {
+          const fontface = new FontFace(customFontName.value, `url("${url}")`)
+          await fontface.load()
+          document.fonts.add(fontface)
+          instance.confirmButtonLoading = false
+          ElMessage.info('字体加载成功！')
+          setCustomFont()
+          done()
+        } catch {
+          instance.confirmButtonLoading = false
+          instance.confirmButtonText = '确定'
+          ElMessage.error('下载失败，请检查您输入的 URL')
+        }
       } else {
         done()
       }
