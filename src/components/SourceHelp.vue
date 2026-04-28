@@ -18,6 +18,12 @@ import { Link } from '@element-plus/icons-vue'
     简单属性抽取；搜索结果目前会打开外部详情页，不会直接入库在线阅读。
   </el-text>
   <br />
+  <el-text>
+    可点击左侧 <code>⇩URL订阅</code> 输入源订阅地址，例如
+    <code>https://shuyuan.yiove.com/sub.json</code>。当前会合并导入 JSON
+    中识别到的书源和订阅源，不会清空已有本地源。
+  </el-text>
+  <br />
   <el-link :icon="Link" href="https://github.com/gedoor/legado" target="_blank">
     Legado 原项目规则参考</el-link
   ><br />

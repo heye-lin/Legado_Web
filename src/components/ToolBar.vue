@@ -13,6 +13,30 @@
     >
   </div>
   <el-dialog
+    v-model="subscriptionDialogVisible"
+    title="URL 订阅导入"
+    width="460px"
+  >
+    <div class="subscription-dialog">
+      <p>输入书源或订阅源 JSON 地址。当前会合并导入，不会清空已有本地源。</p>
+      <el-input
+        v-model="subscriptionUrl"
+        placeholder="https://shuyuan.yiove.com/sub.json"
+        @keyup.enter="importSubscription"
+      />
+    </div>
+    <template #footer>
+      <el-button @click="subscriptionDialogVisible = false">取消</el-button>
+      <el-button
+        type="primary"
+        :loading="isImportingSubscription"
+        @click="importSubscription"
+      >
+        订阅导入
+      </el-button>
+    </template>
+  </el-dialog>
+  <el-dialog
     v-model="hotkeysDialogVisible"
     :show-close="false"
     :before-close="stopRecordKeyDown"
@@ -72,14 +96,20 @@ import { getErrorMessage, selectJsonFile } from '@utils/jsonFile'
 import { getSourceName, isValidSource, normalizeSource } from '../utils/source'
 import {
   downloadSourceConfig,
+  mergeSourceConfig,
   persistSourceConfig,
   readSourceConfigFile,
+  readSourceSubscriptionUrl,
 } from '@/utils/sourceFile'
 import { getCurrentSourceKind, sourceKindDisplayName } from '@/utils/sourceKind'
 
 const store = useSourceStore()
+const router = useRouter()
 const sourceDisplayName = () => sourceKindDisplayName(getCurrentSourceKind())
 type ToolButton = { name: string; hotKeys: string[]; action: () => void }
+const subscriptionDialogVisible = ref(false)
+const subscriptionUrl = ref('')
+const isImportingSubscription = ref(false)
 
 const pull = () => {
   const kind = getCurrentSourceKind()
@@ -255,6 +285,74 @@ const importSources = () => {
   })
 }
 
+const openSubscriptionDialog = () => {
+  subscriptionDialogVisible.value = true
+}
+
+const importSubscription = async () => {
+  const url = subscriptionUrl.value.trim()
+  if (url === '') {
+    ElMessage.info('请输入订阅 URL')
+    return
+  }
+
+  isImportingSubscription.value = true
+  const loadingMsg = ElMessage({
+    message: '正在拉取订阅……',
+    showClose: true,
+    duration: 0,
+  })
+  try {
+    const subscription = await readSourceSubscriptionUrl(url)
+    if (
+      subscription.bookSources.length === 0 &&
+      subscription.rssSources.length === 0
+    ) {
+      ElMessage.warning('订阅中没有可导入的源')
+      return
+    }
+
+    const messages: string[] = []
+    if (subscription.bookSources.length > 0) {
+      const result = await mergeSourceConfig(
+        subscription.bookSources,
+        'bookSource',
+      )
+      store.saveSources(result.sources, 'bookSource')
+      messages.push(
+        `书源 ${subscription.bookSources.length} 条（新增 ${result.added}，更新 ${result.updated}）`,
+      )
+    }
+    if (subscription.rssSources.length > 0) {
+      const result = await mergeSourceConfig(
+        subscription.rssSources,
+        'rssSource',
+      )
+      store.saveSources(result.sources, 'rssSource')
+      messages.push(
+        `订阅源 ${subscription.rssSources.length} 条（新增 ${result.added}，更新 ${result.updated}）`,
+      )
+    }
+
+    const targetKind =
+      subscription.bookSources.length > 0 ? 'bookSource' : 'rssSource'
+    subscriptionDialogVisible.value = false
+    if (store.currentSourceKind !== targetKind) {
+      await router.push({
+        path: targetKind === 'bookSource' ? '/bookSource' : '/rssSource',
+      })
+    } else {
+      store.changeTabName('editList')
+    }
+    ElMessage.success(`URL 订阅导入完成：${messages.join('；')}`)
+  } catch (error) {
+    ElMessage.error(`URL 订阅导入失败：${getErrorMessage(error)}`)
+  } finally {
+    isImportingSubscription.value = false
+    loadingMsg.close()
+  }
+}
+
 const buttons = ref<ToolButton[]>(
   Array.of(
     { name: '⇈推送源', hotKeys: [], action: push },
@@ -266,6 +364,7 @@ const buttons = ref<ToolButton[]>(
     { name: '✓保存源', hotKeys: [], action: saveSource },
     { name: '⇧导出源', hotKeys: [], action: exportSources },
     { name: '⇩导入源', hotKeys: [], action: importSources },
+    { name: '⇩URL订阅', hotKeys: [], action: openSubscriptionDialog },
   ),
 )
 const hotkeysDialogVisible = ref(false)
@@ -406,6 +505,14 @@ onUnmounted(() => {
   margin: 4px;
   padding: 1em;
   width: 6em;
+}
+
+.subscription-dialog {
+  p {
+    margin: 0 0 14px;
+    color: var(--el-text-color-secondary);
+    line-height: 1.7;
+  }
 }
 
 .hotkeys-item {

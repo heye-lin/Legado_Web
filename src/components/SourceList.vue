@@ -30,7 +30,8 @@
     >
   </div>
   <div v-if="sourcesFiltered.length === 0" class="empty-source-list">
-    暂无源。可点击左侧「⇩导入源」导入 JSON，或填写表单后点击「✓保存源」。
+    暂无源。可点击左侧「⇩URL订阅」输入订阅地址，点击「⇩导入源」导入
+    JSON，或填写表单后点击「✓保存源」。
   </div>
   <el-checkbox-group id="source-list" v-model="sourceUrlSelect">
     <virtual-list

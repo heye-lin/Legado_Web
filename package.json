@@ -11,6 +11,7 @@
     "dev": "vite",
     "build": "pnpm type-check && pnpm build-only",
     "preview": "vite preview",
+    "serve": "python3 scripts/serve.py --host 0.0.0.0 --port 8080 --directory dist",
     "build-only": "vite build",
     "type-check": "vue-tsc --build --force",
     "lint:fix": "eslint . --fix",
