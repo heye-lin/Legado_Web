@@ -2,6 +2,12 @@
 import process from 'node:process'
 
 const DEFAULT_SUBSCRIPTION_URL = 'https://shuyuan.yiove.com/sub.json'
+const DEFAULT_SOURCE_FILTER = Object.freeze({
+  keyword: '',
+  enabled: 'enabled',
+  feature: 'web',
+  field: 'all',
+})
 
 const parseArgs = argv => {
   const args = {
@@ -158,10 +164,28 @@ const deleteImportedSmokeBook = async (base, book) => {
 
 const smokeSourceWorkflow = async (base, options) => {
   const { keyword } = options
+  const invalidFeature = await requestJson(base, '/api/book-source-search', {
+    method: 'POST',
+    headers: jsonHeaders(base),
+    body: JSON.stringify({
+      keyword,
+      sourceFilter: { ...DEFAULT_SOURCE_FILTER, feature: '__bad__' },
+    }),
+  })
+  assert(invalidFeature.response.status === 400, '非法书源能力筛选未被拒绝')
+  assert(
+    invalidFeature.payload.isSuccess === false,
+    '非法书源能力筛选响应格式异常',
+  )
+  console.log('✓ 非法书源能力筛选被拒绝')
+
   const search = await apiJson(base, '/api/book-source-search', {
     method: 'POST',
     headers: jsonHeaders(base),
-    body: JSON.stringify({ keyword }),
+    body: JSON.stringify({
+      keyword,
+      sourceFilter: DEFAULT_SOURCE_FILTER,
+    }),
   })
   assert(Array.isArray(search.books), '书源搜索 books 不是数组')
   assert(Array.isArray(search.reports), '书源搜索 reports 不是数组')
@@ -171,6 +195,35 @@ const smokeSourceWorkflow = async (base, options) => {
   console.log(
     `✓ 书源搜索：${search.books.length} 本，${search.reports.length} 条报告，选中《${book.name}》/${book.sourceName}`,
   )
+
+  const preview = await apiJson(base, '/api/books/preview-source', {
+    method: 'POST',
+    headers: jsonHeaders(base),
+    body: JSON.stringify(book),
+  })
+  assert(preview.book?.bookUrl, '站内预览结果缺少 bookUrl')
+  assert(preview.chapterCount > 0, '站内预览未解析出目录')
+  assert(Array.isArray(preview.chapters), '站内预览 chapters 不是数组')
+  assert(preview.chapters.length > 0, '站内预览没有目录样例')
+  assert(
+    typeof preview.alreadyOnShelf === 'boolean',
+    '站内预览 alreadyOnShelf 不是布尔值',
+  )
+  console.log(
+    `✓ 站内预览：目录 ${preview.chapterCount} 章，首章「${preview.chapters[0].title}」，alreadyOnShelf=${preview.alreadyOnShelf}`,
+  )
+
+  const unsignedPreview = await requestJson(base, '/api/books/preview-source', {
+    method: 'POST',
+    headers: jsonHeaders(base),
+    body: JSON.stringify({ ...book, resultSig: '' }),
+  })
+  assert(unsignedPreview.response.status === 400, '未签名搜索结果预览未被拒绝')
+  assert(
+    unsignedPreview.payload.isSuccess === false,
+    '未签名预览拒绝响应格式异常',
+  )
+  console.log('✓ 未签名搜索结果预览被拒绝')
 
   const imported = await apiJson(base, '/api/books/import-source', {
     method: 'POST',
@@ -222,6 +275,8 @@ const main = async () => {
 }
 
 main().catch(error => {
-  console.error(`✗ smoke failed: ${error instanceof Error ? error.message : error}`)
+  console.error(
+    `✗ smoke failed: ${error instanceof Error ? error.message : error}`,
+  )
   process.exitCode = 1
 })

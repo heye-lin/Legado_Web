@@ -12,18 +12,14 @@ const isBookSource = computed(() =>
   <section class="source-help">
     <el-alert class="source-help-hero" type="info" :closable="false" show-icon>
       <template #title>
-        {{
-          isBookSource
-            ? '纯 Web 书源能力说明'
-            : '纯 Web 订阅源说明'
-        }}
+        {{ isBookSource ? '纯 Web 书源能力说明' : '纯 Web 订阅源说明' }}
       </template>
 
       <p class="source-help-lead">
         {{
           isBookSource
-            ? '纯 Web 版支持保存书源，并提供受限书源搜索。生产服务会通过同源接口抓取并解析搜索结果，结果可加入书架后再解析详情、目录与正文缓存到 PostgreSQL。复杂 Legado/Rhino JS、CookieJar、登录流程和反爬绕过仍不支持。'
-            : '纯 Web 版支持保存订阅源，并可通过 URL 订阅导入书源或订阅源；书架页的书源搜索只使用书源，不使用订阅源。'
+            ? '纯 Web 版支持保存书源，并提供受限在线搜书。生产服务会通过同源接口抓取并解析搜索结果，结果可加入书架后再解析详情、目录与正文缓存到 PostgreSQL。“当前 Web 候选”只是静态初筛，复杂 Legado/Rhino JS、CookieJar、登录流程和反爬绕过仍不支持。'
+            : '纯 Web 版支持保存订阅源，并可通过 URL 订阅导入书源或订阅源；书架页的在线搜书只使用书源，不使用订阅源。'
         }}
       </p>
 
@@ -32,13 +28,24 @@ const isBookSource = computed(() =>
           最低可搜索配置：<code>searchUrl</code>、<code>ruleSearch.bookList</code>、<code>ruleSearch.name</code>、<code>ruleSearch.bookUrl</code>。
         </li>
         <li v-if="isBookSource">
-          搜索字段可使用 <code>.book</code>、<code>.title@text</code>、<code>a@href</code>、<code>img@src</code>、<code>.cover@data-src</code> 这类 CSS 选择器和简单属性抽取。
+          搜索字段可使用
+          <code>.book</code
+          >、<code>.title@text</code>、<code>a@href</code>、<code>img@src</code>、<code
+            >.cover@data-src</code
+          >
+          这类 CSS 选择器和简单属性抽取。
         </li>
         <li v-if="!isBookSource">
-          可点击 <code>URL 订阅</code> 输入源订阅地址，例如 <code>https://shuyuan.yiove.com/sub.json</code>；当前会合并导入 JSON 中识别到的书源和订阅源，不会清空已有本地源。
+          可点击 <code>URL 订阅</code> 输入源订阅地址，例如
+          <code>https://shuyuan.yiove.com/sub.json</code>；当前会合并导入 JSON
+          中识别到的书源和订阅源，不会清空已有本地源。
         </li>
         <li>
-          生产服务下搜索结果可在站内预览详情和目录，也可加入书架；服务端会解析常见 <code>ruleBookInfo</code>、<code>ruleToc</code>、<code>ruleContent</code> 规则，目录会随入库保存，正文会在阅读时按需解析并缓存到 PostgreSQL。
+          生产服务下搜索结果可在站内预览详情和目录，也可加入书架；服务端会解析常见
+          <code>ruleBookInfo</code>、<code>ruleToc</code>、<code
+            >ruleContent</code
+          >
+          规则，目录会随入库保存，正文会在阅读时按需解析并缓存到 PostgreSQL。
         </li>
       </ul>
     </el-alert>
@@ -65,14 +72,17 @@ const isBookSource = computed(() =>
           </el-link>
         </div>
         <p class="source-help-note">
-          下方正则内容属于 Legado 原生规则参考，不代表纯 Web 搜索已支持正则链式规则。
+          下方正则内容属于 Legado 原生规则参考，不代表纯 Web
+          搜索已支持正则链式规则。
         </p>
       </section>
 
       <section class="regex-help">
         <div class="regex-help-title">正则提示</div>
         <ul>
-          <li><code>^$()[]{}.?+*|</code> 这些是 Java 正则特殊符号，匹配需转义</li>
+          <li>
+            <code>^$()[]{}.?+*|</code> 这些是 Java 正则特殊符号，匹配需转义
+          </li>
           <li><code>(?s)</code> 前缀表示跨行解析</li>
           <li><code>(?m)</code> 前缀表示逐行匹配</li>
           <li><code>(?i)</code> 前缀表示忽略大小写</li>

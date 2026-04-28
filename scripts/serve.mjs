@@ -358,7 +358,10 @@ const readJsonBody = async req => {
 const isRecord = value =>
   typeof value === 'object' && value !== null && !Array.isArray(value)
 
-const requestHost = req => String(req.headers.host ?? '').trim().toLowerCase()
+const requestHost = req =>
+  String(req.headers.host ?? '')
+    .trim()
+    .toLowerCase()
 
 const assertAllowedApiHost = req => {
   const host = requestHost(req)
@@ -962,7 +965,8 @@ const isForbiddenRemoteAddress = ip => {
   return true
 }
 
-const lookupHostname = hostname => String(hostname ?? '').replace(/^\[|\]$/g, '')
+const lookupHostname = hostname =>
+  String(hostname ?? '').replace(/^\[|\]$/g, '')
 
 const validatePublicUrl = async (rawUrl, label = '远程地址') => {
   let url
@@ -1296,13 +1300,13 @@ const attachSourceSearchBookSignature = book => ({
 const verifySourceSearchBookSignature = book => {
   const searchedAt = Number(book.searchedAt)
   if (!Number.isSafeInteger(searchedAt) || searchedAt <= 0) {
-    throw badRequest('搜索结果缺少有效时间戳，请重新搜索后再加入书架')
+    throw badRequest('搜索结果缺少有效时间戳，请重新搜索后再预览或加入书架')
   }
   if (Date.now() - searchedAt > RESULT_SIGNATURE_TTL_MS) {
-    throw badRequest('搜索结果已过期，请重新搜索后再加入书架')
+    throw badRequest('搜索结果已过期，请重新搜索后再预览或加入书架')
   }
   if (typeof book.resultSig !== 'string' || book.resultSig.trim() === '') {
-    throw badRequest('加入书架请求缺少搜索结果签名，请重新搜索后再加入书架')
+    throw badRequest('搜索结果缺少签名，请重新搜索后再预览或加入书架')
   }
   const expected = signSourceSearchBookFields(book)
   const actual = book.resultSig.trim()
@@ -1312,7 +1316,7 @@ const verifySourceSearchBookSignature = book => {
     expectedBuffer.length !== actualBuffer.length ||
     !crypto.timingSafeEqual(expectedBuffer, actualBuffer)
   ) {
-    throw badRequest('搜索结果签名无效，请重新搜索后再加入书架')
+    throw badRequest('搜索结果签名无效，请重新搜索后再预览或加入书架')
   }
 }
 
@@ -1584,7 +1588,8 @@ const parseRule = rule => {
 const replaceRuleText = (value, pattern, replacement) => {
   const safePattern = String(pattern ?? '')
   if (!safePattern) return value
-  if (safePattern.length > 512) return value.split(safePattern).join(replacement)
+  if (safePattern.length > 512)
+    return value.split(safePattern).join(replacement)
   if (/\([^)]*[+*][^)]*\)[+*{]/.test(safePattern)) {
     return value.split(safePattern).join(replacement)
   }
@@ -1678,10 +1683,7 @@ const applyStaticResultTransform = (value, script) => {
 
     if (statement === variable || statement === 'result') continue
 
-    const escapedVariable = variable.replace(
-      /[.*+?^${}()|[\]\\]/g,
-      '\\$&',
-    )
+    const escapedVariable = variable.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
     const assignMatch = statement.match(
       new RegExp(
         `^${escapedVariable}\\s*=\\s*(?:${escapedVariable}|result)([\\s\\S]+)$`,
@@ -1901,7 +1903,8 @@ const readSingleRuleValue = ($, scope, rule, baseUrl) => {
 
 const readSingleRuleValueWithStaticTransform = ($, scope, rule, baseUrl) => {
   const transform = splitStaticResultTransformRule(rule)
-  if (transform === undefined) return readSingleRuleValue($, scope, rule, baseUrl)
+  if (transform === undefined)
+    return readSingleRuleValue($, scope, rule, baseUrl)
   if (!transform.baseRule) throw new Error('静态 JS 规则缺少基础选择器')
 
   const value = readSingleRuleValue($, scope, transform.baseRule, baseUrl)
@@ -1925,10 +1928,7 @@ const readEmbeddedRuleTemplateValue = ($, scope, rule, baseUrl) => {
       readRuleValue($, scope, innerRule.trim(), baseUrl),
     )
   const [ruleBody, ...replacements] = rendered.split('##')
-  return applyRuleReplacements(
-    ruleBody.trim(),
-    replacements.filter(Boolean),
-  )
+  return applyRuleReplacements(ruleBody.trim(), replacements.filter(Boolean))
 }
 
 const readRuleValue = ($, scope, rule, baseUrl) => {
@@ -2224,10 +2224,13 @@ const renderBookTemplate = (ruleBody, context) =>
     isRecord(context?.book) ? normalizeRuleText(context.book[field]) : '',
   )
 
-const hasBookTemplate = rule => /\{\{\s*book\.[A-Za-z_$][\w$]*\s*\}\}/.test(rule)
+const hasBookTemplate = rule =>
+  /\{\{\s*book\.[A-Za-z_$][\w$]*\s*\}\}/.test(rule)
 
 const readBookTemplateRuleValue = (rule, context) => {
-  const [ruleBody, ...replacements] = String(rule ?? '').trim().split('##')
+  const [ruleBody, ...replacements] = String(rule ?? '')
+    .trim()
+    .split('##')
   return applyRuleReplacements(
     renderBookTemplate(ruleBody, context),
     replacements.filter(Boolean),
@@ -2235,8 +2238,13 @@ const readBookTemplateRuleValue = (rule, context) => {
 }
 
 const isDirectUrlTemplateRule = rule => {
-  const [ruleBody] = String(rule ?? '').trim().split('##')
-  return /^(?:https?:\/\/|\/)/i.test(ruleBody.trim()) && /\{\{[\s\S]*?\}\}/.test(ruleBody)
+  const [ruleBody] = String(rule ?? '')
+    .trim()
+    .split('##')
+  return (
+    /^(?:https?:\/\/|\/)/i.test(ruleBody.trim()) &&
+    /\{\{[\s\S]*?\}\}/.test(ruleBody)
+  )
 }
 
 const readSafeRuleTemplateExpression = (expression, context, baseUrl) => {
@@ -2268,7 +2276,9 @@ const readSafeRuleTemplateExpression = (expression, context, baseUrl) => {
 }
 
 const readDirectUrlTemplateRuleValue = (rule, context, baseUrl) => {
-  const [ruleBody, ...replacements] = String(rule ?? '').trim().split('##')
+  const [ruleBody, ...replacements] = String(rule ?? '')
+    .trim()
+    .split('##')
   const rendered = ruleBody.replace(/\{\{([\s\S]*?)\}\}/g, (_, expression) =>
     readSafeRuleTemplateExpression(expression, context, baseUrl),
   )
@@ -2294,7 +2304,11 @@ const readJsonRuleValue = (item, rule, context = {}) => {
   const [ruleBody] = rule.trim().split('##')
   const normalizedRuleBody = normalizeJsonRuleBody(ruleBody, item)
   const hasTemplate = /\{\{[\s\S]*?\}\}|\{\$[\s\S]*?\}/.test(normalizedRuleBody)
-  const templateValue = renderJsonRuleTemplate(normalizedRuleBody, item, context)
+  const templateValue = renderJsonRuleTemplate(
+    normalizedRuleBody,
+    item,
+    context,
+  )
   const value = hasTemplate
     ? templateValue
     : isJsonPathCompoundRule(normalizedRuleBody)
@@ -2759,9 +2773,9 @@ const collectSourceRuleStrings = (value, output = []) => {
 const sourceHasSearchRule = source =>
   Boolean(
     source.searchUrl?.trim() &&
-      source.ruleSearch?.bookList?.trim() &&
-      source.ruleSearch?.name?.trim() &&
-      source.ruleSearch?.bookUrl?.trim(),
+    source.ruleSearch?.bookList?.trim() &&
+    source.ruleSearch?.name?.trim() &&
+    source.ruleSearch?.bookUrl?.trim(),
   )
 
 const sourceNeedsCookieJar = source => source.enabledCookieJar === true
@@ -2770,24 +2784,39 @@ const sourceNeedsLogin = source =>
 const sourceUsesJsRule = source =>
   Boolean(
     source.jsLib?.trim() ||
-      source.loginUi?.trim() ||
-      source.loginCheckJs?.trim() ||
-      source.coverDecodeJs?.trim() ||
-      collectSourceRuleStrings([
-        source.searchUrl,
-        source.ruleSearch,
-        source.ruleBookInfo,
-        source.ruleToc,
-        source.ruleContent,
-        source.ruleExplore,
-      ]).some(rule =>
-        /(^\s*(?:@?js:|<js>)|<js>|java\.|source\.getVariable|source\.setVariable)/i.test(
-          rule,
-        ),
+    source.loginUi?.trim() ||
+    source.loginCheckJs?.trim() ||
+    source.coverDecodeJs?.trim() ||
+    collectSourceRuleStrings([
+      source.searchUrl,
+      source.ruleSearch,
+      source.ruleBookInfo,
+      source.ruleToc,
+      source.ruleContent,
+      source.ruleExplore,
+    ]).some(rule =>
+      /(^\s*(?:@?js:|<js>)|<js>|java\.|source\.getVariable|source\.setVariable)/i.test(
+        rule,
       ),
+    ),
   )
+const sourceHasHttpUrl = source => {
+  try {
+    const url = new URL(source.bookSourceUrl)
+    return url.protocol === 'http:' || url.protocol === 'https:'
+  } catch {
+    return false
+  }
+}
+const sourceIsWebSearchable = source =>
+  sourceHasSearchRule(source) &&
+  sourceHasHttpUrl(source) &&
+  !sourceUsesJsRule(source) &&
+  !sourceNeedsLogin(source) &&
+  !sourceNeedsCookieJar(source)
 
 const sourceFeatureMatches = (source, feature) => {
+  if (feature === 'web') return sourceIsWebSearchable(source)
   if (feature === 'searchable') return sourceHasSearchRule(source)
   if (feature === 'unsearchable') return !sourceHasSearchRule(source)
   if (feature === 'cookie') return sourceNeedsCookieJar(source)
@@ -2853,6 +2882,7 @@ const sourceFilterFieldAlias = {
 const sourceFilterEnabledValues = new Set(['all', 'enabled', 'disabled'])
 const sourceFilterFeatureValues = new Set([
   'all',
+  'web',
   'searchable',
   'unsearchable',
   'cookie',
@@ -2893,7 +2923,11 @@ const normalizeSourceSearchFilter = filter => {
       'feature',
       sourceFilterFeatureValues,
     ),
-    field: normalizeSourceFilterOption(filter, 'field', sourceFilterFieldValues),
+    field: normalizeSourceFilterOption(
+      filter,
+      'field',
+      sourceFilterFieldValues,
+    ),
   }
 }
 
@@ -2912,9 +2946,7 @@ const sourceMatchesSearchFilter = (source, filter) => {
   const { enabled, feature, field, keyword } = filter
   if (!sourceEnabledMatches(source, enabled)) return false
   if (!sourceFeatureMatches(source, feature)) return false
-  const tokens = normalizeSearchText(keyword)
-    .split(/\s+/)
-    .filter(Boolean)
+  const tokens = normalizeSearchText(keyword).split(/\s+/).filter(Boolean)
   return tokens.every(token => sourceFilterTokenMatches(source, token, field))
 }
 
@@ -2940,7 +2972,8 @@ const scoreSourceSearchBook = (keyword, book) => {
 }
 
 const compareSourceSearchBooks = keyword => (left, right) =>
-  scoreSourceSearchBook(keyword, right) - scoreSourceSearchBook(keyword, left) ||
+  scoreSourceSearchBook(keyword, right) -
+    scoreSourceSearchBook(keyword, left) ||
   (left.originOrder ?? 0) - (right.originOrder ?? 0) ||
   (right.weight ?? 0) - (left.weight ?? 0) ||
   (left.resultIndex ?? 0) - (right.resultIndex ?? 0) ||
@@ -3013,7 +3046,7 @@ const isSourceSearchBookPayload = value =>
 
 const requireSourceSearchBook = value => {
   if (!isSourceSearchBookPayload(value)) {
-    throw badRequest('加入书架请求缺少有效的书源搜索结果')
+    throw badRequest('请求缺少有效的书源搜索结果')
   }
   verifySourceSearchBookSignature(value)
   const name = requireNonEmptyString(value.name, '书名')
@@ -3662,8 +3695,9 @@ const buildStaticJsChapterContentRequest = (rule, item, context) => {
     return undefined
   }
   const endpoint =
-    text.match(/["'](https?:\/\/[^"']*\/be-api\/content\/ads-read),?["']/)?.[1] ??
-    text.match(/["'](\/be-api\/content\/ads-read),?["']/)?.[1]
+    text.match(
+      /["'](https?:\/\/[^"']*\/be-api\/content\/ads-read),?["']/,
+    )?.[1] ?? text.match(/["'](\/be-api\/content\/ads-read),?["']/)?.[1]
   const url = resolveHttpUrl(endpoint ?? '', context.bookSourceUrl)
   const bookId = normalizeRuleText(context.book?.kind ?? context.book?.bookId)
   const chapterSeqNo = Number(
@@ -3729,7 +3763,12 @@ const parseJsonSourceTocPage = (source, page, jsonData, context) => {
   })
   const chapters = items
     .map(item => {
-      const title = readJsonTocChapterName(item, rule.chapterName, page, context)
+      const title = readJsonTocChapterName(
+        item,
+        rule.chapterName,
+        page,
+        context,
+      )
       const chapterRequest = readJsonTocChapterRequest(
         item,
         rule.chapterUrl,
@@ -3822,7 +3861,8 @@ const getQidianBookId = (...values) => {
     const text = String(value ?? '')
     const id =
       text.match(/(?:bookId=|\/book\/|\/chapter\/)(\d{4,})/)?.[1] ??
-      (text.match(/^\d{4,}$/)?.[0] ?? '')
+      text.match(/^\d{4,}$/)?.[0] ??
+      ''
     if (id) return id
   }
   return ''
@@ -4055,19 +4095,22 @@ const previewSourceBook = async payload => {
     return {
       book: existingBook,
       chapterCount: chapters.length,
-      chapters: chapters.slice(0, SOURCE_PREVIEW_CHAPTER_LIMIT).map(previewChapterRecord),
+      chapters: chapters
+        .slice(0, SOURCE_PREVIEW_CHAPTER_LIMIT)
+        .map(previewChapterRecord),
       alreadyOnShelf: true,
       notes: ['该书已在书架，预览展示已保存目录'],
     }
   }
 
-  const { source, info, chapters } = await parseSourceSearchBookForShelf(
-    searchBook,
-  )
+  const { source, info, chapters } =
+    await parseSourceSearchBookForShelf(searchBook)
   return {
     book: buildSourceShelfBook(source, searchBook, info, chapters),
     chapterCount: chapters.length,
-    chapters: chapters.slice(0, SOURCE_PREVIEW_CHAPTER_LIMIT).map(previewChapterRecord),
+    chapters: chapters
+      .slice(0, SOURCE_PREVIEW_CHAPTER_LIMIT)
+      .map(previewChapterRecord),
     alreadyOnShelf: false,
     notes: sourceRuntimeNotes(source),
   }
@@ -4084,9 +4127,8 @@ const importSourceBook = async payload => {
     }
   }
 
-  const { source, info, chapters } = await parseSourceSearchBookForShelf(
-    searchBook,
-  )
+  const { source, info, chapters } =
+    await parseSourceSearchBookForShelf(searchBook)
   const book = buildSourceShelfBook(source, searchBook, info, chapters)
   await saveBookWithChapters(book, chapters)
   return { book, chapterCount: chapters.length, alreadyOnShelf: false }
@@ -4160,7 +4202,10 @@ const sanitizeContentHtml = (html, baseUrl) => {
     Object.keys(node.attribs ?? {}).forEach(attribute => {
       const lowerAttribute = attribute.toLocaleLowerCase()
       const value = node.attribs[attribute]
-      if (lowerAttribute.startsWith('on') || !allowedAttributes.has(lowerAttribute)) {
+      if (
+        lowerAttribute.startsWith('on') ||
+        !allowedAttributes.has(lowerAttribute)
+      ) {
         $(node).removeAttr(attribute)
         return
       }
@@ -4267,7 +4312,12 @@ const textNodesText = ($, target) =>
     .contents()
     .toArray()
     .filter(node => node.type === 'text')
-    .map(node => $(node).text().replace(/\u00a0/g, ' ').trim())
+    .map(node =>
+      $(node)
+        .text()
+        .replace(/\u00a0/g, ' ')
+        .trim(),
+    )
     .filter(Boolean)
     .join('\n')
 

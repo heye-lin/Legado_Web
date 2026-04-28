@@ -14,7 +14,8 @@ router.afterEach(to => {
     'book-home': '书源管理',
     'rss-home': '订阅源管理',
   }
-  document.title = routeTitles[String(to.name)] ?? '阅读 Web 端'
+  const routeTitle = routeTitles[String(to.name)]
+  document.title = routeTitle ? `${routeTitle} - 阅读 Web 端` : '阅读 Web 端'
 })
 
 export default router

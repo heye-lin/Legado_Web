@@ -3,7 +3,7 @@
     <div class="source-search-summary-heading">
       <div>
         <strong class="source-search-title">
-          {{ isSearching ? '正在使用书源搜索' : resultTitleText }}
+          {{ isSearching ? '正在搜索在线书籍' : resultTitleText }}
         </strong>
         <span class="source-search-keyword">「{{ keyword }}」</span>
         <div v-if="reports.length > 0" class="source-search-subtitle">
@@ -19,12 +19,8 @@
         >
           重新搜索
         </el-button>
-        <el-button size="small" @click="emit('clear')">
-          返回本地书架
-        </el-button>
-        <el-button size="small" @click="emit('manage')">
-          管理书源
-        </el-button>
+        <el-button size="small" @click="emit('clear')"> 返回书架 </el-button>
+        <el-button size="small" @click="emit('manage')"> 管理书源 </el-button>
       </div>
     </div>
 
@@ -161,8 +157,9 @@ const successfulSourceCount = computed(
 )
 
 const resultTitleText = computed(() => {
-  if (sourceReports.value.length === 0) return `书源搜索结果：${props.resultCount} 本`
-  return `书源搜索结果：${props.resultCount} 本，${successfulSourceCount.value}/${sourceReports.value.length} 个源成功`
+  if (sourceReports.value.length === 0)
+    return `在线搜书结果：${props.resultCount} 本`
+  return `在线搜书结果：${props.resultCount} 本，${successfulSourceCount.value}/${sourceReports.value.length} 个源成功`
 })
 
 const reportCountItems = computed(() =>
@@ -222,7 +219,9 @@ const showReportDetails = computed(
 const successHidden = computed(
   () =>
     !reportsExpanded.value &&
-    props.reports.some(report => report.status === 'success' && report.count > 0),
+    props.reports.some(
+      report => report.status === 'success' && report.count > 0,
+    ),
 )
 
 const reportToggleText = computed(() =>
@@ -252,7 +251,10 @@ const topIssues = computed(() => {
   const messages: string[] = []
   const { failed, unsupported, empty } = reportCounts.value
   if (failed > 0) messages.push(`${failed} 个源请求失败或被目标站拦截`)
-  if (unsupported > 0) messages.push(`${unsupported} 个源依赖 JS、Cookie 或登录规则`)
+  if (unsupported > 0)
+    messages.push(
+      `${unsupported} 个源使用当前 Web 搜索不支持的规则或运行时能力`,
+    )
   if (empty > 0) messages.push(`${empty} 个源请求成功但规则未命中`)
   return messages.slice(0, 3)
 })
@@ -269,7 +271,8 @@ const reportStatusText = (status: SourceSearchReport['status']) =>
 const reportTagType = (status: SourceSearchReport['status']) =>
   reportMeta[status].type
 
-const normalizedMessage = (message: string) => message.replace(/\s+/g, ' ').trim()
+const normalizedMessage = (message: string) =>
+  message.replace(/\s+/g, ' ').trim()
 
 const formatReportMessage = (message: string) => {
   const normalized = normalizedMessage(message)

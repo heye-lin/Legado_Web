@@ -10,7 +10,9 @@
   >
     <div class="source-item-main">
       <div class="source-item-title-row">
-        <span class="source-item-name">{{ getSourceName(source) }}</span>
+        <span class="source-item-name" :title="sourceName">
+          {{ sourceName }}
+        </span>
         <span class="source-item-tags">
           <el-tag
             size="small"
@@ -19,10 +21,20 @@
           >
             {{ source.enabled ? '启用' : '禁用' }}
           </el-tag>
-          <el-tag v-if="isSearchable" size="small" type="primary" effect="plain">
+          <el-tag
+            v-if="isSearchable"
+            size="small"
+            type="primary"
+            effect="plain"
+          >
             可搜索
           </el-tag>
-          <el-tag v-if="needsCookieJar" size="small" type="warning" effect="plain">
+          <el-tag
+            v-if="needsCookieJar"
+            size="small"
+            type="warning"
+            effect="plain"
+          >
             CookieJar
           </el-tag>
           <el-tag v-if="usesJs" size="small" type="warning" effect="plain">
@@ -30,7 +42,7 @@
           </el-tag>
         </span>
       </div>
-      <div class="source-item-meta">
+      <div class="source-item-meta" :title="sourceMetaTitle">
         <span>{{ sourceUrl }}</span>
         <span v-if="sourceGroup"> · {{ sourceGroup }}</span>
       </div>
@@ -63,11 +75,15 @@ const props = defineProps<{
 const store = useSourceStore()
 
 const currentSourceUrl = computed(() => store.currentSourceUrl)
+const sourceName = computed(() => getSourceName(props.source))
 const sourceUrl = computed(() => getSourceUniqueKey(props.source))
 const sourceGroup = computed(() =>
   isBookSource(props.source)
     ? props.source.bookSourceGroup
     : props.source.sourceGroup,
+)
+const sourceMetaTitle = computed(() =>
+  [sourceUrl.value, sourceGroup.value].filter(Boolean).join(' · '),
 )
 const isSearchable = computed(() => sourceHasSearchRule(props.source))
 const needsCookieJar = computed(() => sourceNeedsCookieJar(props.source))
@@ -117,7 +133,10 @@ const isSaveError = computed(() => {
 .source-item-tags {
   display: inline-flex;
   flex: 0 0 auto;
+  flex-wrap: wrap;
+  justify-content: flex-end;
   gap: 4px;
+  max-width: 52%;
 }
 
 .source-item-meta {

@@ -71,6 +71,7 @@ import {
   getSourceUniqueKey,
   isSourceMatchesAdvanced,
   sourceHasSearchRule,
+  sourceIsWebSearchable,
   sourceNeedsCookieJar,
   sourceNeedsLogin,
   sourceUsesJsRule,
@@ -126,6 +127,7 @@ const sourceStats = computed(() =>
     (stats, source) => {
       if (source.enabled) stats.enabled += 1
       else stats.disabled += 1
+      if (sourceIsWebSearchable(source)) stats.web += 1
       if (sourceHasSearchRule(source)) stats.searchable += 1
       if (
         sourceNeedsCookieJar(source) ||
@@ -136,7 +138,7 @@ const sourceStats = computed(() =>
       }
       return stats
     },
-    { enabled: 0, disabled: 0, searchable: 0, complex: 0 },
+    { enabled: 0, disabled: 0, web: 0, searchable: 0, complex: 0 },
   ),
 )
 // 计算当前筛选关键词下的选中源

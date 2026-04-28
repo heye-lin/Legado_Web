@@ -2,7 +2,7 @@
   <el-dialog
     v-model="visible"
     class="source-search-dialog-window"
-    title="书源搜索"
+    title="搜索在线书籍"
     width="min(560px, calc(100vw - 32px))"
     :teleported="false"
   >
@@ -14,7 +14,7 @@
         v-model="keywordModel"
         placeholder="输入书名、作者或关键词"
         :prefix-icon="SearchIcon"
-        aria-label="输入书名、作者或关键词进行书源搜索"
+        aria-label="输入书名、作者或关键词搜索在线书籍"
         @keyup.enter="emit('confirm')"
       />
       <source-filter-panel
@@ -30,7 +30,8 @@
         @reset="emit('resetFilters')"
       />
       <div class="source-search-filter-help">
-        支持空格分隔多个关键词，并支持
+        默认仅搜索“当前 Web 候选”书源，减少 JS、登录和 CookieJar
+        规则噪音；也可切换到“可搜索”或“全部能力”扩大范围。支持空格分隔多个关键词，并支持
         <code>name:</code>、<code>url:</code>、<code>group:</code>、
         <code>comment:</code>、<code>rule:</code> 前缀精确筛选参与搜索的书源。
       </div>
@@ -109,7 +110,7 @@ const fieldModel = computed<SourceSearchField>({
 const defaultFilters = {
   keyword: '',
   enabled: 'enabled',
-  feature: 'searchable',
+  feature: 'web',
   field: 'all',
 } satisfies {
   keyword: string

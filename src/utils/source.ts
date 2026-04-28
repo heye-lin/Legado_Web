@@ -77,12 +77,19 @@ export const getSourceName = (source: Source) =>
 export type SourceEnabledFilter = 'all' | 'enabled' | 'disabled'
 export type SourceFeatureFilter =
   | 'all'
+  | 'web'
   | 'searchable'
   | 'unsearchable'
   | 'cookie'
   | 'js'
   | 'login'
-export type SourceSearchField = 'all' | 'name' | 'url' | 'group' | 'comment' | 'rule'
+export type SourceSearchField =
+  | 'all'
+  | 'name'
+  | 'url'
+  | 'group'
+  | 'comment'
+  | 'rule'
 export type SourceFilterOption<T extends string> = {
   label: string
   value: T
@@ -98,6 +105,7 @@ export const SOURCE_ENABLED_FILTER_OPTIONS: readonly SourceFilterOption<SourceEn
 export const SOURCE_FEATURE_FILTER_OPTIONS: readonly SourceFilterOption<SourceFeatureFilter>[] =
   [
     { label: '全部能力', value: 'all' },
+    { label: '当前 Web 候选', value: 'web' },
     { label: '可搜索', value: 'searchable' },
     { label: '不可搜索', value: 'unsearchable' },
     { label: 'CookieJar', value: 'cookie' },
@@ -202,22 +210,32 @@ export const sourceHasSearchRule = (source: Source) =>
   isBookSource(source) &&
   Boolean(
     source.searchUrl?.trim() &&
-      source.ruleSearch?.bookList?.trim() &&
-      source.ruleSearch?.name?.trim() &&
-      source.ruleSearch?.bookUrl?.trim(),
+    source.ruleSearch?.bookList?.trim() &&
+    source.ruleSearch?.name?.trim() &&
+    source.ruleSearch?.bookUrl?.trim(),
   )
+
+export const sourceHasHttpUrl = (source: Source) => {
+  const sourceUrl = getSourceUniqueKey(source)
+  try {
+    const url = new URL(sourceUrl)
+    return url.protocol === 'http:' || url.protocol === 'https:'
+  } catch {
+    return false
+  }
+}
 
 export const sourceUsesJsRule = (source: Source) =>
   Boolean(
     source.jsLib?.trim() ||
-      source.loginUi?.trim() ||
-      source.loginCheckJs?.trim() ||
-      source.coverDecodeJs?.trim() ||
-      collectRuleStrings(source).some(rule =>
-        /(^\s*(?:@?js:|<js>)|<js>|java\.|source\.getVariable|source\.setVariable)/i.test(
-          rule,
-        ),
+    source.loginUi?.trim() ||
+    source.loginCheckJs?.trim() ||
+    source.coverDecodeJs?.trim() ||
+    collectRuleStrings(source).some(rule =>
+      /(^\s*(?:@?js:|<js>)|<js>|java\.|source\.getVariable|source\.setVariable)/i.test(
+        rule,
       ),
+    ),
   )
 
 export const sourceNeedsLogin = (source: Source) =>
@@ -226,12 +244,21 @@ export const sourceNeedsLogin = (source: Source) =>
 export const sourceNeedsCookieJar = (source: Source) =>
   source.enabledCookieJar === true
 
+export const sourceIsWebSearchable = (source: Source) =>
+  sourceHasSearchRule(source) &&
+  sourceHasHttpUrl(source) &&
+  !sourceUsesJsRule(source) &&
+  !sourceNeedsLogin(source) &&
+  !sourceNeedsCookieJar(source)
+
 const sourceMatchesEnabledFilter = (
   source: Source,
   filter: SourceEnabledFilter,
 ) => {
   if (filter === 'all') return true
-  return filter === 'enabled' ? source.enabled === true : source.enabled !== true
+  return filter === 'enabled'
+    ? source.enabled === true
+    : source.enabled !== true
 }
 
 const sourceMatchesFeatureFilter = (
@@ -239,6 +266,7 @@ const sourceMatchesFeatureFilter = (
   filter: SourceFeatureFilter,
 ) => {
   if (filter === 'all') return true
+  if (filter === 'web') return sourceIsWebSearchable(source)
   if (filter === 'searchable') return sourceHasSearchRule(source)
   if (filter === 'unsearchable') return !sourceHasSearchRule(source)
   if (filter === 'cookie') return sourceNeedsCookieJar(source)
@@ -293,11 +321,7 @@ export const isSourceMatches: (source: Source, searchKey: string) => boolean = (
 export const isSourceMatchesAdvanced = (
   source: Source,
   searchKey: string,
-  {
-    enabled = 'all',
-    feature = 'all',
-    field = 'all',
-  }: SourceMatchOptions = {},
+  { enabled = 'all', feature = 'all', field = 'all' }: SourceMatchOptions = {},
 ) =>
   sourceMatchesEnabledFilter(source, enabled) &&
   sourceMatchesFeatureFilter(source, feature) &&

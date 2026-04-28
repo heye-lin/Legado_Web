@@ -92,7 +92,7 @@ export const useBookStore = defineStore('book', {
       if (this.shelf.length > 0 && !force) {
         void this.refreshBookShelf().catch(error => {
           ElMessage.error(
-            `刷新书架失败：${
+            `加载书架失败：${
               error instanceof Error ? error.message : String(error)
             }`,
           )

@@ -20,12 +20,23 @@
           />
         </div>
         <div class="preview-meta">
-          <h3>{{ bookName }}</h3>
-          <div class="preview-subtitle">
-            {{ displayBook?.author || '作者未知' }} · {{ book.sourceName }}
+          <h3 :title="bookName">{{ bookName }}</h3>
+          <div
+            class="preview-subtitle"
+            :title="`${displayBook?.author || '作者未知'} · ${book.sourceName}`"
+          >
+            <span class="preview-author">
+              {{ displayBook?.author || '作者未知' }}
+            </span>
+            <span class="preview-subtitle-separator">·</span>
+            <span class="preview-source-name">{{ book.sourceName }}</span>
           </div>
           <div class="preview-tags">
-            <el-tag v-if="preview?.alreadyOnShelf" type="success" effect="plain">
+            <el-tag
+              v-if="preview?.alreadyOnShelf"
+              type="success"
+              effect="plain"
+            >
               已在书架
             </el-tag>
             <el-tag v-if="preview" effect="plain">
@@ -102,10 +113,10 @@
         v-if="book"
         type="primary"
         :loading="importing"
-        :disabled="loading"
+        :disabled="loading || !preview || preview.alreadyOnShelf"
         @click="emit('import', book)"
       >
-        {{ preview?.alreadyOnShelf ? '刷新书架' : '加入书架' }}
+        {{ importButtonText }}
       </el-button>
     </template>
   </el-dialog>
@@ -113,11 +124,7 @@
 
 <script setup lang="ts">
 import API from '@api'
-import type {
-  Book,
-  SourceBookPreviewResult,
-  SourceSearchBook,
-} from '@/book'
+import type { Book, SourceBookPreviewResult, SourceSearchBook } from '@/book'
 import { getDisplayCoverUrl, getPlaceholderCover } from '@/utils/bookCover'
 
 const props = defineProps<{
@@ -148,6 +155,13 @@ const bookName = computed(() => displayBook.value?.name || '未知书籍')
 const dialogTitle = computed(() =>
   props.book === undefined ? '书籍预览' : `预览：${bookName.value}`,
 )
+
+const importButtonText = computed(() => {
+  if (props.preview?.alreadyOnShelf) return '已在书架'
+  if (props.errorMessage) return '预览失败，暂不可加入'
+  if (props.preview === undefined) return '等待预览'
+  return '加入书架'
+})
 
 const placeholderCover = computed(() =>
   getPlaceholderCover(
@@ -235,6 +249,11 @@ const usePlaceholderCover = (event: Event) => {
     color: var(--shelf-text, var(--el-text-color-primary));
     font-size: 20px;
     line-height: 1.35;
+    overflow: hidden;
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
   }
 }
 
@@ -245,7 +264,30 @@ const usePlaceholderCover = (event: Event) => {
 }
 
 .preview-subtitle {
+  display: flex;
+  gap: 6px;
+  min-width: 0;
   margin-top: 6px;
+}
+
+.preview-author,
+.preview-source-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.preview-author {
+  flex: 0 1 auto;
+}
+
+.preview-subtitle-separator {
+  flex: 0 0 auto;
+}
+
+.preview-source-name {
+  flex: 1 1 auto;
 }
 
 .preview-tags {
@@ -302,8 +344,7 @@ const usePlaceholderCover = (event: Event) => {
   color: var(--shelf-muted, var(--el-text-color-secondary));
 
   & + .preview-chapter {
-    border-top: 1px dashed
-      var(--shelf-divider, rgba(148, 163, 184, 0.22));
+    border-top: 1px dashed var(--shelf-divider, rgba(148, 163, 184, 0.22));
   }
 }
 

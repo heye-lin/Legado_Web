@@ -46,10 +46,15 @@
       </el-button>
     </div>
     <div v-if="showSummary" class="source-filter-summary">
-      <el-tag v-if="total !== undefined" effect="plain">全部 {{ total }}</el-tag>
+      <el-tag v-if="total !== undefined" effect="plain"
+        >全部 {{ total }}</el-tag
+      >
       <template v-if="stats !== undefined">
         <el-tag type="success" effect="plain">启用 {{ stats.enabled }}</el-tag>
         <el-tag type="info" effect="plain">禁用 {{ stats.disabled }}</el-tag>
+        <el-tag type="primary" effect="plain">
+          Web 候选 {{ stats.web }}
+        </el-tag>
         <el-tag type="primary" effect="plain">
           可搜索 {{ stats.searchable }}
         </el-tag>
@@ -81,6 +86,7 @@ import {
 type SourceFilterStats = {
   enabled: number
   disabled: number
+  web: number
   searchable: number
   complex: number
 }

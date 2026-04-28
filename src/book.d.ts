@@ -108,6 +108,7 @@ export type SourceSearchFilter = {
   enabled?: 'all' | 'enabled' | 'disabled'
   feature?:
     | 'all'
+    | 'web'
     | 'searchable'
     | 'unsearchable'
     | 'cookie'

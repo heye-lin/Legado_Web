@@ -28,7 +28,9 @@
             <div class="author">{{ book.author || '作者未知' }}</div>
             <div v-if="isSourceSearchBook(book)" class="update-info">
               <div class="dot">•</div>
-              <div class="date">{{ book.sourceName }}</div>
+              <div class="date source-name" :title="book.sourceName">
+                {{ book.sourceName }}
+              </div>
             </div>
             <div v-else class="update-info">
               <div class="dot">•</div>
@@ -240,6 +242,10 @@ const proxyImage = (evt: Event, book: BookItem) => {
 
           .author {
             flex: 0 1 45%;
+          }
+
+          .source-name {
+            max-width: 180px;
           }
         }
 

@@ -77,7 +77,7 @@ export const useSourceSearch = ({
   const sourceSearchEnabledFilter =
     ref<NonNullable<SourceSearchFilter['enabled']>>('enabled')
   const sourceSearchFeatureFilter =
-    ref<NonNullable<SourceSearchFilter['feature']>>('searchable')
+    ref<NonNullable<SourceSearchFilter['feature']>>('web')
   const sourceSearchFieldFilter =
     ref<NonNullable<SourceSearchFilter['field']>>('all')
   const sourceSearchReportsExpanded = ref(false)
@@ -89,6 +89,7 @@ export const useSourceSearch = ({
   const isPreviewingSourceBook = ref(false)
   let sourceSearchRunId = 0
   let sourceSearchAbortController: AbortController | undefined
+  let previewRunId = 0
 
   const sourceSearchEmptyMessage = computed(
     () =>
@@ -106,7 +107,7 @@ export const useSourceSearch = ({
   const resetSourceSearchFilters = () => {
     sourceSearchSourceKeyword.value = ''
     sourceSearchEnabledFilter.value = 'enabled'
-    sourceSearchFeatureFilter.value = 'searchable'
+    sourceSearchFeatureFilter.value = 'web'
     sourceSearchFieldFilter.value = 'all'
   }
 
@@ -131,6 +132,11 @@ export const useSourceSearch = ({
     resetSourceSearchState()
   }
 
+  const cancelSourceBookPreview = () => {
+    previewRunId += 1
+    isPreviewingSourceBook.value = false
+  }
+
   const searchBook = async () => {
     const keyword = searchWord.value.trim()
     if (keyword === '') {
@@ -151,7 +157,8 @@ export const useSourceSearch = ({
         signal: controller.signal,
         sourceFilter: sourceFilter.value,
       })
-      if (currentRunId !== sourceSearchRunId || controller.signal.aborted) return
+      if (currentRunId !== sourceSearchRunId || controller.signal.aborted)
+        return
       if (!result.data.isSuccess) {
         sourceSearchErrorMessage.value = result.data.errorMsg
         ElMessage.error(result.data.errorMsg)
@@ -162,10 +169,13 @@ export const useSourceSearch = ({
       sourceSearchKeyword.value = keyword
       sourceSearchActive.value = true
       if (sourceSearchBooks.value.length === 0) {
-        ElMessage.warning(getSourceSearchEmptyMessage(sourceSearchReports.value))
+        ElMessage.warning(
+          getSourceSearchEmptyMessage(sourceSearchReports.value),
+        )
       }
     } catch (error) {
-      if (currentRunId !== sourceSearchRunId || controller.signal.aborted) return
+      if (currentRunId !== sourceSearchRunId || controller.signal.aborted)
+        return
       sourceSearchErrorMessage.value = `书源搜索失败：${getErrorMessage(error)}`
       ElMessage.error(sourceSearchErrorMessage.value)
     } finally {
@@ -234,6 +244,7 @@ export const useSourceSearch = ({
       ElMessage.warning('书源搜索结果只支持预览 http/https 详情链接')
       return
     }
+    const currentRunId = ++previewRunId
     previewSourceBook.value = book
     previewResult.value = undefined
     previewErrorMessage.value = ''
@@ -241,6 +252,7 @@ export const useSourceSearch = ({
     isPreviewingSourceBook.value = true
     try {
       const result = await API.previewSourceBook(book)
+      if (currentRunId !== previewRunId) return
       if (!result.data.isSuccess) {
         previewErrorMessage.value = result.data.errorMsg
         ElMessage.error(`预览失败：${result.data.errorMsg}`)
@@ -248,10 +260,13 @@ export const useSourceSearch = ({
       }
       previewResult.value = result.data.data
     } catch (error) {
+      if (currentRunId !== previewRunId) return
       previewErrorMessage.value = getErrorMessage(error)
       ElMessage.error(`预览失败：${previewErrorMessage.value}`)
     } finally {
-      isPreviewingSourceBook.value = false
+      if (currentRunId === previewRunId) {
+        isPreviewingSourceBook.value = false
+      }
     }
   }
 
@@ -266,7 +281,10 @@ export const useSourceSearch = ({
     }
   })
 
-  onUnmounted(cancelSourceSearchRequest)
+  onUnmounted(() => {
+    cancelSourceSearchRequest()
+    cancelSourceBookPreview()
+  })
 
   return {
     sourceSearchBooks,

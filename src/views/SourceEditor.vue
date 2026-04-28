@@ -34,7 +34,6 @@ watch(
   kind => {
     const currentRunId = ++loadRunId
     store.syncCurrentSourceKind(kind)
-    document.title = isBookSourceKind(kind) ? '书源管理' : '订阅源管理'
     API.getSources(kind)
       .then(({ data }) => {
         if (currentRunId !== loadRunId) return
