@@ -171,25 +171,45 @@
         v-if="sourceSearchActive || isSearchingSources"
         class="source-search-summary"
       >
-        <div>
-          <strong>
-            {{
-              isSearchingSources
-                ? '正在使用书源搜索'
-                : `书源搜索结果：${sourceSearchBooks.length} 本`
-            }}
-          </strong>
-          <span class="source-search-keyword"
-            >「{{ sourceSearchKeyword }}」</span
-          >
-        </div>
-        <div class="source-search-actions">
-          <el-button size="small" @click="clearSourceSearch">
-            返回本地书架
-          </el-button>
-          <el-button size="small" type="warning" @click="openBookSourceManager">
-            管理书源
-          </el-button>
+        <div class="source-search-summary-heading">
+          <div>
+            <strong class="source-search-title">
+              {{
+                isSearchingSources
+                  ? '正在使用书源搜索'
+                  : `书源搜索结果：${sourceSearchBooks.length} 本`
+              }}
+            </strong>
+            <span class="source-search-keyword"
+              >「{{ sourceSearchKeyword }}」</span
+            >
+            <div
+              v-if="sourceSearchReports.length > 0"
+              class="source-search-subtitle"
+            >
+              {{ sourceSearchReportSummaryText }}
+            </div>
+          </div>
+          <div class="source-search-actions">
+            <el-button
+              size="small"
+              type="success"
+              :loading="isSearchingSources"
+              @click="searchBook"
+            >
+              重新搜索
+            </el-button>
+            <el-button size="small" @click="clearSourceSearch">
+              返回本地书架
+            </el-button>
+            <el-button
+              size="small"
+              type="warning"
+              @click="openBookSourceManager"
+            >
+              管理书源
+            </el-button>
+          </div>
         </div>
         <div v-if="sourceSearchReports.length > 0" class="source-search-report">
           <el-tag
@@ -198,14 +218,24 @@
             :type="item.type"
             effect="plain"
             size="small"
+            round
           >
             {{ item.label }} {{ item.count }}
           </el-tag>
         </div>
+        <div class="source-search-tip">
+          {{ sourceSearchTipText }}
+        </div>
         <div
-          v-if="sourceSearchReportDetails.length > 0"
+          v-if="sourceSearchShowReportDetails"
           class="source-search-report-details"
         >
+          <div class="source-search-report-details-header">
+            <span>{{ sourceSearchReportDetailsTitle }}</span>
+            <span v-if="sourceSearchSuccessHidden">
+              成功项默认收起，展开可查看全部源。
+            </span>
+          </div>
           <div
             v-for="report in sourceSearchReportDetails"
             :key="`${report.sourceUrl}:${report.status}`"
@@ -228,9 +258,7 @@
             </span>
           </div>
           <el-button
-            v-if="
-              sourceSearchReportHiddenCount > 0 || sourceSearchReportsExpanded
-            "
+            v-if="sourceSearchCanToggleReports"
             class="source-search-report-toggle"
             text
             size="small"
@@ -239,10 +267,12 @@
             {{ sourceSearchReportToggleText }}
           </el-button>
         </div>
-        <div class="source-search-tip">
-          点击搜索结果卡片会在新标签页打开来源站详情；点击“加入书架”会通过生产服务解析详情/目录并保存到书架，阅读章节时按需解析正文并缓存到
-          PostgreSQL。纯静态/浏览器本地模式不支持书源结果入库；复杂
-          JS、登录、CookieJar 和反爬规则仍不支持。
+        <div
+          v-if="sourceSearchTopIssues.length > 0"
+          class="source-search-quick-hint"
+        >
+          <strong>优先处理：</strong>
+          <span>{{ sourceSearchTopIssues.join('；') }}</span>
         </div>
       </div>
       <div v-if="showStandaloneEmptyState" class="empty-shelf-state">
@@ -444,22 +474,53 @@ const sourceSearchReportStatusOrder: SourceSearchReport['status'][] = [
   'skipped',
   'truncated',
 ]
+const sourceSearchReportCounts = computed(() =>
+  sourceSearchReports.value.reduce(
+    (counts, report) => {
+      counts[report.status] += 1
+      return counts
+    },
+    {
+      success: 0,
+      empty: 0,
+      failed: 0,
+      unsupported: 0,
+      skipped: 0,
+      truncated: 0,
+    } satisfies Record<SourceSearchReport['status'], number>,
+  ),
+)
 const sourceSearchReportCountItems = computed(() =>
   sourceSearchReportStatusOrder
     .map(status => ({
       status,
       label: sourceSearchReportMeta[status].label,
       type: sourceSearchReportMeta[status].type,
-      count: sourceSearchReports.value.filter(
-        report => report.status === status,
-      ).length,
+      count: sourceSearchReportCounts.value[status],
     }))
     .filter(item => item.count > 0),
 )
+const sourceSearchIssueStatusPriority: Record<
+  SourceSearchReport['status'],
+  number
+> = {
+  failed: 0,
+  unsupported: 1,
+  empty: 2,
+  skipped: 3,
+  truncated: 4,
+  success: 5,
+}
 const sourceSearchIssueReports = computed(() =>
-  sourceSearchReports.value.filter(
-    report => report.status !== 'success' || report.count === 0,
-  ),
+  sourceSearchReports.value
+    .filter(report => report.status !== 'success' || report.count === 0)
+    .slice()
+    .sort(
+      (left, right) =>
+        sourceSearchIssueStatusPriority[left.status] -
+          sourceSearchIssueStatusPriority[right.status] ||
+        left.sourceName.localeCompare(right.sourceName),
+    ),
 )
 const sourceSearchReportPreviewLimit = 8
 const sourceSearchReportDetails = computed(() =>
@@ -472,13 +533,60 @@ const sourceSearchReportHiddenCount = computed(() =>
     0,
     sourceSearchReportsExpanded.value
       ? 0
-      : sourceSearchReports.value.length - sourceSearchReportPreviewLimit,
+      : sourceSearchIssueReports.value.length - sourceSearchReportPreviewLimit,
   ),
+)
+const sourceSearchCanToggleReports = computed(
+  () =>
+    sourceSearchReportsExpanded.value ||
+    sourceSearchReportDetails.value.length < sourceSearchReports.value.length,
+)
+const sourceSearchShowReportDetails = computed(
+  () =>
+    sourceSearchReportDetails.value.length > 0 ||
+    sourceSearchCanToggleReports.value,
+)
+const sourceSearchSuccessHidden = computed(
+  () =>
+    !sourceSearchReportsExpanded.value &&
+    sourceSearchReports.value.some(
+      report => report.status === 'success' && report.count > 0,
+    ),
 )
 const sourceSearchReportToggleText = computed(() =>
   sourceSearchReportsExpanded.value
     ? '收起搜索明细'
     : `查看全部 ${sourceSearchReports.value.length} 条搜索明细`,
+)
+const sourceSearchReportDetailsTitle = computed(() => {
+  if (sourceSearchReportsExpanded.value) return '全部搜索明细'
+  if (sourceSearchIssueReports.value.length === 0) return '搜索明细'
+  return sourceSearchReportHiddenCount.value > 0
+    ? `问题明细，另有 ${sourceSearchReportHiddenCount.value} 条已收起`
+    : '问题明细'
+})
+const sourceSearchReportSummaryText = computed(() => {
+  const counts = sourceSearchReportCountItems.value
+    .map(item => `${item.label} ${item.count}`)
+    .join(' · ')
+  return counts
+    ? `${counts} · 返回结果 ${sourceSearchBooks.value.length} 本`
+    : `返回结果 ${sourceSearchBooks.value.length} 本`
+})
+const sourceSearchTopIssues = computed(() => {
+  const messages: string[] = []
+  const { failed: failedCount, unsupported: unsupportedCount, empty: emptyCount } =
+    sourceSearchReportCounts.value
+  if (failedCount > 0) messages.push(`${failedCount} 个源请求失败或被目标站拦截`)
+  if (unsupportedCount > 0)
+    messages.push(`${unsupportedCount} 个源依赖 JS、Cookie 或登录规则`)
+  if (emptyCount > 0) messages.push(`${emptyCount} 个源请求成功但规则未命中`)
+  return messages.slice(0, 3)
+})
+const sourceSearchTipText = computed(() =>
+  apiTargetName.value === 'PostgreSQL 持久化'
+    ? '点击卡片打开来源站详情；点击“加入书架”会通过生产服务解析详情/目录并保存到 PostgreSQL，阅读章节时按需解析正文并缓存。复杂 JS、登录、CookieJar 和反爬规则仍不支持。'
+    : `点击卡片打开来源站详情；点击“加入书架”需要生产服务解析详情/目录并保存，当前为${apiTargetName.value}模式，纯静态/浏览器本地降级模式不支持书源结果入库。复杂 JS、登录、CookieJar 和反爬规则仍不支持。`,
 )
 const sourceSearchEmptyMessage = computed(
   () =>
@@ -702,6 +810,7 @@ const handleBookImport = async (book: SourceSearchBook) => {
         : `《${imported.book.name}》已加入书架，共 ${imported.chapterCount} 章`,
     )
     clearSourceSearch()
+    searchWord.value = ''
   } catch (error) {
     ElMessage.error(`加入书架失败：${getErrorMessage(error)}`)
   } finally {
@@ -790,21 +899,36 @@ onUnmounted(
 
 <style lang="scss" scoped>
 .index-wrapper {
+  --shelf-sidebar-bg: #f7f7f7;
+  --shelf-main-bg: #f5f7fb;
+  --shelf-panel-bg: rgba(255, 255, 255, 0.78);
+  --shelf-panel-border: #e5e9f0;
+  --shelf-text: #33373d;
+  --shelf-muted: #606975;
+  --shelf-soft-muted: #8a94a3;
+  --shelf-radius: 16px;
+
   height: 100%;
   width: 100%;
   display: flex;
   flex-direction: row;
+  color: var(--shelf-text);
+  background: var(--shelf-main-bg);
 
   .navigation-wrapper {
     width: 260px;
     min-width: 260px;
     padding: 48px 36px;
-    background-color: #f7f7f7;
+    background:
+      radial-gradient(circle at 16% 4%, rgba(64, 158, 255, 0.14), transparent 32%),
+      var(--shelf-sidebar-bg);
+    border-right: 1px solid var(--shelf-panel-border);
 
     .navigation-title {
       font-size: 24px;
-      font-weight: 500;
+      font-weight: 700;
       font-family: FZZCYSK;
+      color: var(--shelf-text);
     }
 
     .navigation-sub-title {
@@ -812,7 +936,7 @@ onUnmounted(
       font-weight: 300;
       font-family: FZZCYSK;
       margin-top: 16px;
-      color: #6b7280;
+      color: var(--shelf-muted);
     }
 
     .search-wrapper {
@@ -837,7 +961,7 @@ onUnmounted(
 
       .recent-title {
         font-size: 14px;
-        color: #6b7280;
+        color: var(--shelf-muted);
         font-family: FZZCYSK;
       }
 
@@ -861,7 +985,7 @@ onUnmounted(
 
       .setting-title {
         font-size: 14px;
-        color: #6b7280;
+        color: var(--shelf-muted);
         font-family: FZZCYSK;
       }
 
@@ -872,9 +996,18 @@ onUnmounted(
       }
 
       .standalone-action-button {
-        display: block;
-        margin-top: 12px;
-        margin-left: 0;
+        margin: 0;
+      }
+
+      .setting-item {
+        display: grid;
+        grid-template-columns: 1fr;
+        gap: 10px;
+        margin-top: 16px;
+
+        :deep(.el-button + .el-button) {
+          margin-left: 0;
+        }
       }
     }
 
@@ -886,6 +1019,18 @@ onUnmounted(
       align-items: center;
       display: flex;
       flex-direction: row;
+
+      .bottom-icon {
+        opacity: 0.72;
+        transition:
+          opacity 0.18s ease,
+          transform 0.18s ease;
+
+        &:hover {
+          opacity: 1;
+          transform: translateY(-2px);
+        }
+      }
     }
   }
 
@@ -896,7 +1041,7 @@ onUnmounted(
   .source-search-dialog {
     p {
       margin: 0 0 14px;
-      color: #606266;
+      color: var(--shelf-muted);
       line-height: 1.7;
     }
   }
@@ -909,22 +1054,31 @@ onUnmounted(
     flex-direction: column;
     box-sizing: border-box;
     overflow: hidden;
+    background:
+      radial-gradient(circle at 78% 10%, rgba(103, 194, 58, 0.1), transparent 28%),
+      var(--shelf-main-bg);
     transition:
       background-color 0.2s ease,
       outline-color 0.2s ease;
 
-    .shelf-feature-bar {
+    .shelf-feature-bar,
+    .source-search-summary {
       display: flex;
+      box-sizing: border-box;
+      border: 1px solid var(--shelf-panel-border);
+      border-radius: var(--shelf-radius);
+      color: var(--shelf-text);
+      background: var(--shelf-panel-bg);
+      box-shadow: 0 12px 30px rgba(15, 23, 42, 0.06);
+      backdrop-filter: blur(10px);
+    }
+
+    .shelf-feature-bar {
       align-items: center;
       justify-content: space-between;
       gap: 16px;
       margin-bottom: 18px;
       padding: 16px 18px;
-      box-sizing: border-box;
-      border: 1px solid #ebeef5;
-      border-radius: 12px;
-      color: #33373d;
-      background: rgba(255, 255, 255, 0.72);
     }
 
     .shelf-feature-text {
@@ -933,7 +1087,7 @@ onUnmounted(
       gap: 6px;
 
       span {
-        color: #606975;
+        color: var(--shelf-muted);
         font-size: 14px;
       }
     }
@@ -954,28 +1108,51 @@ onUnmounted(
     }
 
     .source-search-summary {
+      flex-direction: column;
       margin-bottom: 18px;
-      padding: 14px 18px;
-      border: 1px solid #ebeef5;
-      border-radius: 12px;
-      color: #33373d;
-      background: rgba(255, 255, 255, 0.72);
+      padding: 16px 18px;
+    }
+
+    .source-search-summary-heading {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 16px;
+    }
+
+    .source-search-title {
+      font-size: 16px;
+    }
+
+    .source-search-subtitle {
+      margin-top: 6px;
+      color: var(--shelf-soft-muted);
+      font-size: 13px;
+      line-height: 1.5;
     }
 
     .source-search-keyword {
       margin-left: 6px;
-      color: #606975;
+      color: var(--shelf-muted);
     }
 
     .source-search-actions {
-      margin-top: 10px;
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+      gap: 8px;
+
+      :deep(.el-button + .el-button) {
+        margin-left: 0;
+      }
     }
 
     .source-search-report,
     .source-search-report-details,
-    .source-search-tip {
-      margin-top: 8px;
-      color: #606975;
+    .source-search-tip,
+    .source-search-quick-hint {
+      margin-top: 10px;
+      color: var(--shelf-muted);
       font-size: 14px;
       line-height: 1.6;
     }
@@ -989,20 +1166,37 @@ onUnmounted(
     .source-search-report-details {
       max-height: 220px;
       overflow: auto;
+      padding: 10px 12px;
+      border: 1px solid rgba(148, 163, 184, 0.18);
+      border-radius: 12px;
+      background: rgba(248, 250, 252, 0.72);
+    }
+
+    .source-search-report-details-header {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 6px;
+      color: var(--shelf-soft-muted);
+      font-size: 12px;
     }
 
     .source-search-report-detail {
       display: flex;
       align-items: flex-start;
       gap: 8px;
-      padding: 4px 0;
+      padding: 6px 0;
       overflow-wrap: anywhere;
+
+      & + .source-search-report-detail {
+        border-top: 1px dashed rgba(148, 163, 184, 0.2);
+      }
     }
 
     .source-search-report-source {
       flex: 0 0 auto;
       max-width: 160px;
-      color: #606266;
+      color: var(--shelf-text);
       font-weight: 600;
       overflow: hidden;
       text-overflow: ellipsis;
@@ -1012,6 +1206,12 @@ onUnmounted(
     .source-search-report-message {
       min-width: 0;
       white-space: normal;
+    }
+
+    .source-search-quick-hint {
+      padding: 10px 12px;
+      border-radius: 12px;
+      background: rgba(230, 162, 60, 0.1);
     }
 
     .source-search-report-toggle {
@@ -1027,12 +1227,12 @@ onUnmounted(
       min-height: 260px;
       padding: 24px;
       box-sizing: border-box;
-      border: 1px dashed #dcdfe6;
+      border: 1px dashed var(--shelf-panel-border);
       border-radius: 18px;
-      color: #606975;
+      color: var(--shelf-muted);
       text-align: center;
       line-height: 1.8;
-      background: rgba(255, 255, 255, 0.42);
+      background: var(--shelf-panel-bg);
     }
 
     &.drag-over {
@@ -1049,11 +1249,12 @@ onUnmounted(
       align-items: center;
       justify-content: center;
       box-sizing: border-box;
-      border: 1px dashed #dcdfe6;
+      border: 1px dashed var(--shelf-panel-border);
       border-radius: 18px;
       text-align: center;
-      color: #33373d;
-      background: rgba(255, 255, 255, 0.56);
+      color: var(--shelf-text);
+      background: var(--shelf-panel-bg);
+      box-shadow: 0 12px 32px rgba(15, 23, 42, 0.06);
     }
 
     .empty-shelf-title {
@@ -1064,7 +1265,7 @@ onUnmounted(
     }
 
     .empty-shelf-description {
-      color: #606975;
+      color: var(--shelf-muted);
       font-size: 14px;
       line-height: 1.7;
       margin-bottom: 24px;
@@ -1102,7 +1303,7 @@ onUnmounted(
 
     .drag-import-description {
       font-size: 14px;
-      color: #6f7b8a;
+      color: var(--shelf-muted);
     }
   }
 }
@@ -1180,13 +1381,30 @@ onUnmounted(
         display: none;
       }
 
-      .shelf-feature-actions {
-        justify-content: flex-start;
-      }
-
       .source-search-summary,
       .source-search-empty {
         margin: 16px;
+      }
+
+      .source-search-summary-heading,
+      .source-search-report-details-header {
+        flex-direction: column;
+        align-items: stretch;
+      }
+
+      .source-search-actions {
+        justify-content: flex-start;
+      }
+
+      .source-search-keyword {
+        display: inline-block;
+        max-width: 100%;
+        margin-left: 0;
+        overflow-wrap: anywhere;
+      }
+
+      .source-search-report-source {
+        max-width: 42vw;
       }
 
       .drag-import-mask {
@@ -1201,20 +1419,30 @@ onUnmounted(
 }
 
 .night {
+  --shelf-sidebar-bg: #202326;
+  --shelf-main-bg: #14171a;
+  --shelf-panel-bg: rgba(31, 35, 39, 0.78);
+  --shelf-panel-border: #343a42;
+  --shelf-text: #d7dbe0;
+  --shelf-muted: #a0a7b0;
+  --shelf-soft-muted: #7f8792;
+
   .navigation-wrapper {
-    background-color: #454545;
+    background:
+      radial-gradient(circle at 16% 4%, rgba(64, 158, 255, 0.12), transparent 32%),
+      var(--shelf-sidebar-bg);
 
     .navigation-title {
-      color: #aeaeae;
+      color: var(--shelf-text);
     }
 
     .search-wrapper {
       .search-input {
-        .el-input__wrapper {
+        :deep(.el-input__wrapper) {
           background-color: #454545;
         }
 
-        .el-input__inner {
+        :deep(.el-input__inner) {
           color: #b1b1b1;
         }
       }
@@ -1222,47 +1450,25 @@ onUnmounted(
   }
 
   .shelf-wrapper {
-    background-color: #161819;
+    background:
+      radial-gradient(circle at 78% 10%, rgba(103, 194, 58, 0.08), transparent 28%),
+      var(--shelf-main-bg);
 
     &.drag-over {
       background-color: rgba(64, 158, 255, 0.12);
     }
 
-    .empty-shelf-state {
-      border-color: #3d434a;
-      color: #d5d8dc;
-      background: rgba(255, 255, 255, 0.04);
+    .source-search-report-details {
+      border-color: rgba(148, 163, 184, 0.16);
+      background: rgba(17, 24, 39, 0.42);
     }
 
-    .source-search-summary {
-      border-color: #3d434a;
-      color: #d5d8dc;
-      background: rgba(255, 255, 255, 0.04);
+    .source-search-quick-hint {
+      background: rgba(230, 162, 60, 0.14);
     }
 
-    .shelf-feature-bar {
-      border-color: #3d434a;
-      color: #d5d8dc;
-      background: rgba(255, 255, 255, 0.04);
-    }
-
-    .shelf-feature-text span {
-      color: #9aa1aa;
-    }
-
-    .source-search-empty {
-      border-color: #3d434a;
-      color: #9aa1aa;
-      background: rgba(255, 255, 255, 0.04);
-    }
-
-    .empty-shelf-description,
-    .source-search-keyword,
-    .source-search-report,
-    .source-search-report-details,
-    .source-search-tip,
-    .drag-import-description {
-      color: #9aa1aa;
+    .source-search-report-detail + .source-search-report-detail {
+      border-top-color: rgba(148, 163, 184, 0.14);
     }
 
     .drag-import-mask {

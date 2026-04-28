@@ -57,21 +57,41 @@ watch(
 .editor {
   display: flex;
   height: 100dvh;
+  box-sizing: border-box;
+  gap: 16px;
+  padding: 16px 20px;
   overflow: hidden;
+  background:
+    radial-gradient(circle at 8% 0, rgba(64, 158, 255, 0.1), transparent 30%),
+    var(--el-bg-color-page);
+
   .left {
     flex: 1;
-    margin-left: 20px;
+    min-width: 0;
   }
+
   .right {
     flex: 1;
     width: 360px;
-    margin-right: 20px;
+    min-width: 320px;
+  }
+
+  .left,
+  .right {
+    box-sizing: border-box;
+    padding: 12px 14px;
+    border: 1px solid var(--el-border-color-lighter);
+    border-radius: 16px;
+    background: var(--el-bg-color);
+    box-shadow: 0 12px 30px rgba(15, 23, 42, 0.06);
   }
 }
 
 @media screen and (max-width: 750px) {
   .editor {
     flex-direction: column;
+    gap: 12px;
+    padding: 12px;
     overflow: auto;
 
     :deep(.menu) {
@@ -88,7 +108,8 @@ watch(
       flex: none;
       width: auto;
       min-height: auto;
-      margin: 0 12px;
+      min-width: 0;
+      padding: 10px;
     }
   }
 }

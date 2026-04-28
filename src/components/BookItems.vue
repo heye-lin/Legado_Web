@@ -172,27 +172,40 @@ const proxyImage = (evt: Event, book: BookItem) => {
 
   .wrapper {
     display: grid;
-    grid-template-columns: repeat(auto-fill, 380px);
-    justify-content: space-around;
-    grid-gap: 10px;
+    grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+    gap: 18px;
 
     .book {
       user-select: none;
       display: flex;
       cursor: pointer;
-      margin-bottom: 18px;
-      padding: 24px 24px;
-      width: 360px;
+      min-width: 0;
+      padding: 18px;
       flex-direction: row;
-      justify-content: space-around;
+      align-items: center;
+      box-sizing: border-box;
+      border: 1px solid var(--shelf-panel-border, #ebeef5);
+      border-radius: 16px;
+      background: var(--shelf-panel-bg, rgba(255, 255, 255, 0.72));
+      box-shadow: 0 10px 24px rgba(15, 23, 42, 0.05);
+      transition:
+        transform 0.18s ease,
+        box-shadow 0.18s ease,
+        border-color 0.18s ease,
+        background-color 0.18s ease;
 
       .cover-img {
+        flex: 0 0 auto;
         width: 84px;
         height: 112px;
 
         .cover {
           width: 84px;
           height: 112px;
+          display: block;
+          object-fit: cover;
+          border-radius: 10px;
+          box-shadow: 0 8px 18px rgba(15, 23, 42, 0.18);
         }
       }
 
@@ -211,7 +224,7 @@ const proxyImage = (evt: Event, book: BookItem) => {
           max-width: 100%;
           font-size: 16px;
           font-weight: 700;
-          color: #33373d;
+          color: var(--shelf-text, #33373d);
           overflow: hidden;
           text-overflow: ellipsis;
           white-space: nowrap;
@@ -226,7 +239,7 @@ const proxyImage = (evt: Event, book: BookItem) => {
           min-width: 0;
           font-size: 12px;
           font-weight: 600;
-          color: #6b6b6b;
+          color: var(--shelf-muted, #6b6b6b);
 
           .update-info {
             display: flex;
@@ -255,6 +268,7 @@ const proxyImage = (evt: Event, book: BookItem) => {
         .source-book-actions {
           display: flex;
           align-items: center;
+          flex-wrap: wrap;
           gap: 8px;
           max-width: 100%;
 
@@ -271,7 +285,7 @@ const proxyImage = (evt: Event, book: BookItem) => {
         .intro,
         .dur-chapter,
         .last-chapter {
-          color: #606975;
+          color: var(--shelf-muted, #606975);
           font-size: 13px;
           margin-top: 3px;
           font-weight: 500;
@@ -289,8 +303,9 @@ const proxyImage = (evt: Event, book: BookItem) => {
 
     .book:hover,
     .book:focus-visible {
-      background: rgba(0, 0, 0, 0.1);
-      transition-duration: 0.5s;
+      border-color: rgba(64, 158, 255, 0.36);
+      box-shadow: 0 18px 36px rgba(15, 23, 42, 0.12);
+      transform: translateY(-2px);
     }
 
     .book:focus-visible {
@@ -313,12 +328,16 @@ const proxyImage = (evt: Event, book: BookItem) => {
     .wrapper {
       display: flex;
       flex-direction: column;
+      gap: 0;
 
       .book {
         box-sizing: border-box;
         width: 100%;
-        margin-bottom: 0;
-        padding: 10px 20px;
+        border-radius: 0;
+        border-right: 0;
+        border-left: 0;
+        padding: 14px 20px;
+        box-shadow: none;
 
         .info {
           margin-left: 16px;

@@ -60,7 +60,7 @@ const isBookSource = computed(() =>
   <el-text type="warning">
     下方正则内容属于 Legado 原生规则参考，不代表纯 Web 搜索已支持正则链式规则。
   </el-text>
-  <div style="margin-top: 20px">
+  <div class="regex-help">
     <span
       ><el-text
         ><code>^$()[]{}.?+*|</code> 这些是 Java
@@ -85,5 +85,14 @@ const isBookSource = computed(() =>
 }
 .el-text {
   padding-top: 20px;
+}
+
+.regex-help {
+  margin-top: 20px;
+  padding: 12px 14px;
+  border: 1px solid var(--el-border-color-light);
+  border-radius: 10px;
+  background: var(--el-fill-color-lighter);
+  line-height: 1.8;
 }
 </style>
