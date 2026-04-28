@@ -38,7 +38,7 @@ const isBookSource = computed(() =>
           可点击 <code>URL 订阅</code> 输入源订阅地址，例如 <code>https://shuyuan.yiove.com/sub.json</code>；当前会合并导入 JSON 中识别到的书源和订阅源，不会清空已有本地源。
         </li>
         <li>
-          生产服务下搜索结果可打开外部详情页，也可加入书架；服务端会解析常见 <code>ruleBookInfo</code>、<code>ruleToc</code>、<code>ruleContent</code> 规则，目录会随入库保存，正文会在阅读时按需解析并缓存到 PostgreSQL。
+          生产服务下搜索结果可在站内预览详情和目录，也可加入书架；服务端会解析常见 <code>ruleBookInfo</code>、<code>ruleToc</code>、<code>ruleContent</code> 规则，目录会随入库保存，正文会在阅读时按需解析并缓存到 PostgreSQL。
         </li>
       </ul>
     </el-alert>

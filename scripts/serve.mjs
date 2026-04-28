@@ -1871,6 +1871,16 @@ const readSingleRuleValue = ($, scope, rule, baseUrl) => {
   if (attribute === 'text') {
     return applyRuleReplacements(target.text().trim(), parsedRule.replacements)
   }
+  if (attribute === 'textnodes' || attribute === 'owntext') {
+    const text = target
+      .contents()
+      .toArray()
+      .filter(node => node.type === 'text')
+      .map(node => $(node).text())
+      .join('')
+      .trim()
+    return applyRuleReplacements(text, parsedRule.replacements)
+  }
   if (attribute === 'html') {
     return applyRuleReplacements(
       target.html()?.trim() ?? '',
@@ -2222,6 +2232,47 @@ const readBookTemplateRuleValue = (rule, context) => {
     renderBookTemplate(ruleBody, context),
     replacements.filter(Boolean),
   )
+}
+
+const isDirectUrlTemplateRule = rule => {
+  const [ruleBody] = String(rule ?? '').trim().split('##')
+  return /^(?:https?:\/\/|\/)/i.test(ruleBody.trim()) && /\{\{[\s\S]*?\}\}/.test(ruleBody)
+}
+
+const readSafeRuleTemplateExpression = (expression, context, baseUrl) => {
+  const trimmed = expression.trim().replace(/;+\s*$/, '')
+  const bookMatch = trimmed.match(/^book\.([A-Za-z_$][\w$]*)$/)
+  if (bookMatch !== null && isRecord(context?.book)) {
+    return normalizeRuleText(context.book[bookMatch[1]])
+  }
+
+  if (/^baseUrl$/i.test(trimmed)) return baseUrl
+  const baseMatch = trimmed.match(
+    /^baseUrl\.match\(\s*\/((?:\\\/|\\.|[^/])*)\/([gimsuy]*)\s*\)\s*(?:\[\s*(\d+)\s*\]|\?\.\[\s*(\d+)\s*\])$/i,
+  )
+  if (baseMatch !== null) {
+    const flags = baseMatch[2].replace(/g/g, '')
+    const regex = new RegExp(decodeStaticRuleString(baseMatch[1]), flags)
+    const result = String(baseUrl ?? '').match(regex)
+    return normalizeRuleText(result?.[Number(baseMatch[3] ?? baseMatch[4])])
+  }
+
+  if (/^cookie\.(?:getKey|getCookie)\s*\(/i.test(trimmed)) return ''
+
+  const sourceMatch = trimmed.match(/^source\.(?:key|bookSourceUrl)$/i)
+  if (sourceMatch !== null && isRecord(context?.source)) {
+    return normalizeRuleText(context.source.bookSourceUrl)
+  }
+
+  throw new Error(`URL 模板表达式「{{${expression}}}」暂不支持`)
+}
+
+const readDirectUrlTemplateRuleValue = (rule, context, baseUrl) => {
+  const [ruleBody, ...replacements] = String(rule ?? '').trim().split('##')
+  const rendered = ruleBody.replace(/\{\{([\s\S]*?)\}\}/g, (_, expression) =>
+    readSafeRuleTemplateExpression(expression, context, baseUrl),
+  )
+  return applyRuleReplacements(rendered, replacements.filter(Boolean))
 }
 
 const renderJsonRuleTemplate = (ruleBody, item, context = {}) =>
@@ -3153,6 +3204,9 @@ const readOptionalCriticalSourceRuleValue = (
   if (!rule?.trim()) return ''
   assertSupportedRule(rule, label)
   try {
+    if (isDirectUrlTemplateRule(rule)) {
+      return readDirectUrlTemplateRuleValue(rule, context, baseUrl)
+    }
     if (hasBookTemplate(rule)) return readBookTemplateRuleValue(rule, context)
     if (jsonData !== undefined && !isJsonReadableRule(rule)) {
       throw new Error('JSON 页面规则必须使用 JSONPath、JSON accessor 或模板')
@@ -3217,7 +3271,10 @@ const parseSourceBookInfo = (source, searchBook, page) => {
     latestChapterTitle: read(rule.lastChapter) || searchBook.latestChapterTitle,
     intro: read(rule.intro) || searchBook.intro,
   }
-  const templateContext = { book: { ...searchBook, ...baseInfo } }
+  const templateContext = {
+    book: { ...searchBook, ...baseInfo },
+    source,
+  }
   const readCritical = (item, label) =>
     readOptionalCriticalSourceRuleValue(
       $,
@@ -3516,6 +3573,87 @@ const parseJsonSourceTocPage = (source, page, jsonData, context) => {
   return { chapters, nextTocUrl }
 }
 
+const extractQidianPageData = text => {
+  for (const match of String(text ?? '').matchAll(
+    /<script[^>]*>\s*(\{"pageContext"[\s\S]*?)<\/script>/g,
+  )) {
+    try {
+      const parsed = JSON.parse(match[1])
+      const pageData = parsed?.pageContext?.pageProps?.pageData
+      if (isRecord(pageData)) return pageData
+    } catch {
+      // Continue scanning other scripts.
+    }
+  }
+  return undefined
+}
+
+const getQidianBookId = (...values) => {
+  for (const value of values) {
+    const text = String(value ?? '')
+    const id =
+      text.match(/(?:bookId=|\/book\/|\/chapter\/)(\d{4,})/)?.[1] ??
+      (text.match(/^\d{4,}$/)?.[0] ?? '')
+    if (id) return id
+  }
+  return ''
+}
+
+const isQidianSourceContext = (source, book, tocUrl) =>
+  [source.bookSourceUrl, source.bookSourceName, book.bookUrl, tocUrl].some(
+    value => /qidian\.com|起点/i.test(String(value ?? '')),
+  )
+
+const parseQidianMobileCatalogPage = (book, page, bookId) => {
+  const pageData = extractQidianPageData(page.text)
+  const volumes = Array.isArray(pageData?.vs) ? pageData.vs : []
+  const chapters = []
+  const seen = new Set()
+
+  for (const volume of volumes) {
+    const items = Array.isArray(volume?.cs) ? volume.cs : []
+    for (const item of items) {
+      const chapterId = normalizeRuleText(item?.id)
+      const title = normalizeRuleText(item?.cN)
+      if (!chapterId || !title || seen.has(chapterId)) continue
+      seen.add(chapterId)
+      const isVip = !(item?.sS === 1 || item?.sS === '1')
+      chapters.push(
+        buildSourceChapterRecord({
+          bookUrl: book.bookUrl,
+          title,
+          chapterUrl: `https://m.qidian.com/chapter/${bookId}/${chapterId}/`,
+          tocUrl: page.finalUrl,
+          index: chapters.length,
+          isVolume: false,
+          isVip,
+          isPay: !isVip,
+          tag: [item?.uT, item?.cnt ? `${item.cnt}字` : '']
+            .map(normalizeRuleText)
+            .filter(Boolean)
+            .join('  '),
+        }),
+      )
+    }
+  }
+
+  if (chapters.length === 0) {
+    throw new Error('起点移动目录页面没有解析出章节')
+  }
+  return chapters
+}
+
+const parseQidianMobileCatalog = async (source, book, tocUrl) => {
+  const bookId = getQidianBookId(book.kind, book.bookUrl, book.tocUrl, tocUrl)
+  if (!bookId || !isQidianSourceContext(source, book, tocUrl)) return undefined
+  const page = await fetchSourcePageText(
+    source,
+    `https://m.qidian.com/book/${bookId}/catalog/`,
+    '起点移动目录地址',
+  )
+  return parseQidianMobileCatalogPage(book, page, bookId)
+}
+
 const isSupportedJsonTocJsRule = rule =>
   readStaticJsChapterName(rule, { serialName: 'x' }) !== '' ||
   (/^@js:/i.test(String(rule ?? '')) &&
@@ -3546,6 +3684,13 @@ const parseSourceTocPage = (source, page, context) => {
 }
 
 const parseSourceBookChapters = async (source, book, tocUrl) => {
+  const qidianChapters = await parseQidianMobileCatalog(
+    source,
+    book,
+    tocUrl,
+  ).catch(() => undefined)
+  if (qidianChapters !== undefined) return qidianChapters
+
   const chapters = []
   const seenChapterUrls = new Set()
   const seenTocUrls = new Set()
@@ -3640,17 +3785,7 @@ const buildSourceShelfBook = (source, searchBook, info, chapters) => {
   }
 }
 
-const importSourceBook = async payload => {
-  const searchBook = requireSourceSearchBook(payload)
-  const existingBook = await getBook(searchBook.bookUrl)
-  if (existingBook !== undefined) {
-    return {
-      book: existingBook,
-      chapterCount: existingBook.totalChapterNum ?? 0,
-      alreadyOnShelf: true,
-    }
-  }
-
+const parseSourceSearchBookForShelf = async searchBook => {
   const source = await findBookSourceForSearchBook(searchBook)
   const detailPage = await fetchSourcePageText(
     source,
@@ -3667,6 +3802,61 @@ const importSourceBook = async payload => {
     source,
     { ...searchBook, ...info, bookUrl: searchBook.bookUrl },
     info.tocUrl,
+  )
+  return { source, info, chapters }
+}
+
+const previewChapterRecord = chapter => ({
+  index: chapter.index,
+  title: chapter.title,
+  url: chapter.url,
+  isVolume: chapter.isVolume,
+  isVip: chapter.isVip,
+  isPay: chapter.isPay,
+  tag: chapter.tag,
+})
+
+const SOURCE_PREVIEW_CHAPTER_LIMIT = 80
+
+const previewSourceBook = async payload => {
+  const searchBook = requireSourceSearchBook(payload)
+  const existingBook = await getBook(searchBook.bookUrl)
+  if (existingBook !== undefined) {
+    const chapters = await getChapters(searchBook.bookUrl)
+    return {
+      book: existingBook,
+      chapterCount: chapters.length,
+      chapters: chapters.slice(0, SOURCE_PREVIEW_CHAPTER_LIMIT).map(previewChapterRecord),
+      alreadyOnShelf: true,
+      notes: ['该书已在书架，预览展示已保存目录'],
+    }
+  }
+
+  const { source, info, chapters } = await parseSourceSearchBookForShelf(
+    searchBook,
+  )
+  return {
+    book: buildSourceShelfBook(source, searchBook, info, chapters),
+    chapterCount: chapters.length,
+    chapters: chapters.slice(0, SOURCE_PREVIEW_CHAPTER_LIMIT).map(previewChapterRecord),
+    alreadyOnShelf: false,
+    notes: sourceRuntimeNotes(source),
+  }
+}
+
+const importSourceBook = async payload => {
+  const searchBook = requireSourceSearchBook(payload)
+  const existingBook = await getBook(searchBook.bookUrl)
+  if (existingBook !== undefined) {
+    return {
+      book: existingBook,
+      chapterCount: existingBook.totalChapterNum ?? 0,
+      alreadyOnShelf: true,
+    }
+  }
+
+  const { source, info, chapters } = await parseSourceSearchBookForShelf(
+    searchBook,
   )
   const book = buildSourceShelfBook(source, searchBook, info, chapters)
   await saveBookWithChapters(book, chapters)
@@ -3930,9 +4120,31 @@ const readRequiredContentRuleValue = ($, scope, jsonData, rule, baseUrl) => {
   ).trim()
 }
 
+const readQidianMobileChapterContent = page => {
+  let hostname = ''
+  try {
+    hostname = new URL(page.finalUrl).hostname
+  } catch {
+    return ''
+  }
+  if (hostname !== 'm.qidian.com') return ''
+
+  const pageData = extractQidianPageData(page.text)
+  const content = pageData?.chapterInfo?.content
+  return typeof content === 'string' ? content : ''
+}
+
 const parseSourceContentPage = async (source, page) => {
   const rule = source.ruleContent ?? {}
   if (!rule.content?.trim()) throw new Error('书源未配置正文规则')
+
+  const qidianMobileContent = readQidianMobileChapterContent(page)
+  if (qidianMobileContent) {
+    return {
+      content: normalizeChapterContent(qidianMobileContent, page.finalUrl),
+      nextContentUrl: '',
+    }
+  }
 
   const jsonData = tryParseJsonPage(page.text, [rule.content])
   const $ = cheerio.load(page.text)
@@ -4171,6 +4383,11 @@ const handleApi = async (req, res, url) => {
 
     if (url.pathname === '/api/books/import-source' && req.method === 'POST') {
       sendApiOk(res, await importSourceBook(await readJsonBody(req)))
+      return true
+    }
+
+    if (url.pathname === '/api/books/preview-source' && req.method === 'POST') {
+      sendApiOk(res, await previewSourceBook(await readJsonBody(req)))
       return true
     }
 

@@ -8,7 +8,33 @@
       edit: sourceUrl === currentSourceUrl,
     }"
   >
-    {{ getSourceName(source) }}
+    <div class="source-item-main">
+      <div class="source-item-title-row">
+        <span class="source-item-name">{{ getSourceName(source) }}</span>
+        <span class="source-item-tags">
+          <el-tag
+            size="small"
+            :type="source.enabled ? 'success' : 'info'"
+            effect="plain"
+          >
+            {{ source.enabled ? '启用' : '禁用' }}
+          </el-tag>
+          <el-tag v-if="isSearchable" size="small" type="primary" effect="plain">
+            可搜索
+          </el-tag>
+          <el-tag v-if="needsCookieJar" size="small" type="warning" effect="plain">
+            CookieJar
+          </el-tag>
+          <el-tag v-if="usesJs" size="small" type="warning" effect="plain">
+            JS
+          </el-tag>
+        </span>
+      </div>
+      <div class="source-item-meta">
+        <span>{{ sourceUrl }}</span>
+        <span v-if="sourceGroup"> · {{ sourceGroup }}</span>
+      </div>
+    </div>
     <el-button
       text
       :icon="Edit"
@@ -20,7 +46,14 @@
 
 <script setup lang="ts">
 import { Edit } from '@element-plus/icons-vue'
-import { getSourceUniqueKey, getSourceName } from '@/utils/source'
+import {
+  getSourceUniqueKey,
+  getSourceName,
+  isBookSource,
+  sourceHasSearchRule,
+  sourceNeedsCookieJar,
+  sourceUsesJsRule,
+} from '@/utils/source'
 import type { Source } from '@/source'
 
 const props = defineProps<{
@@ -31,6 +64,14 @@ const store = useSourceStore()
 
 const currentSourceUrl = computed(() => store.currentSourceUrl)
 const sourceUrl = computed(() => getSourceUniqueKey(props.source))
+const sourceGroup = computed(() =>
+  isBookSource(props.source)
+    ? props.source.bookSourceGroup
+    : props.source.sourceGroup,
+)
+const isSearchable = computed(() => sourceHasSearchRule(props.source))
+const needsCookieJar = computed(() => sourceNeedsCookieJar(props.source))
+const usesJs = computed(() => sourceUsesJsRule(props.source))
 
 const handleSourceClick = (source: Source) => {
   store.changeCurrentSource(source)
@@ -47,7 +88,47 @@ const isSaveError = computed(() => {
   display: flex;
   justify-content: space-between;
   align-items: center;
+  min-width: 0;
+  gap: 8px;
 }
+
+.source-item-main {
+  min-width: 0;
+  flex: 1;
+}
+
+.source-item-title-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+}
+
+.source-item-name {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--el-text-color-primary);
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.source-item-tags {
+  display: inline-flex;
+  flex: 0 0 auto;
+  gap: 4px;
+}
+
+.source-item-meta {
+  margin-top: 4px;
+  overflow: hidden;
+  color: var(--el-text-color-secondary);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .error {
   border-color: var(--el-color-error) !important;
   color: var(--el-color-error) !important;

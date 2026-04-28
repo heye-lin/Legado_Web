@@ -243,8 +243,8 @@ const topIssues = computed(() => {
 
 const tipText = computed(() =>
   props.apiTargetName === 'PostgreSQL 持久化'
-    ? '点击卡片打开来源站详情；点击“加入书架”会通过生产服务解析详情/目录并保存到 PostgreSQL，阅读章节时按需解析正文并缓存。复杂 JS、登录、CookieJar 和反爬规则仍不支持。'
-    : `点击卡片打开来源站详情；点击“加入书架”需要生产服务解析详情/目录并保存，当前为${props.apiTargetName}模式，纯静态/浏览器本地降级模式不支持书源结果入库。复杂 JS、登录、CookieJar 和反爬规则仍不支持。`,
+    ? '点击卡片在站内预览详情和目录，不再跳转外站；点击“加入书架”会通过生产服务解析详情/目录并保存到 PostgreSQL，阅读章节时按需解析正文并缓存。复杂 JS、登录、CookieJar 和反爬规则仍不支持。'
+    : `点击卡片需要生产服务在站内预览详情和目录；点击“加入书架”需要生产服务解析详情/目录并保存，当前为${props.apiTargetName}模式，纯静态/浏览器本地降级模式不支持书源结果入库。复杂 JS、登录、CookieJar 和反爬规则仍不支持。`,
 )
 
 const reportStatusText = (status: SourceSearchReport['status']) =>

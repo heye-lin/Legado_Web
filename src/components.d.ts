@@ -33,6 +33,7 @@ declare module 'vue' {
     ReadSettings: typeof import('./components/ReadSettings.vue')['default']
     RouterLink: typeof import('vue-router')['RouterLink']
     RouterView: typeof import('vue-router')['RouterView']
+    SourceBookPreviewDialog: typeof import('./components/SourceBookPreviewDialog.vue')['default']
     SourceDebug: typeof import('./components/SourceDebug.vue')['default']
     SourceHelp: typeof import('./components/SourceHelp.vue')['default']
     SourceItem: typeof import('./components/SourceItem.vue')['default']

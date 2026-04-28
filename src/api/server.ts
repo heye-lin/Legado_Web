@@ -6,6 +6,7 @@ import type {
   BookChapter,
   BookProgress,
   SourceBookImportResult,
+  SourceBookPreviewResult,
   SourceSearchBook,
   SourceSearchResult,
 } from '@/book'
@@ -375,6 +376,27 @@ const importSourceBook = async (
     () => standaloneApi.importSourceBook(book),
   )
 
+const previewSourceBook = async (
+  book: SourceSearchBook,
+): ApiResult<SourceBookPreviewResult> =>
+  withApiFallback(
+    async () => ({
+      data: {
+        isSuccess: true,
+        errorMsg: '',
+        data: await request<SourceBookPreviewResult>(
+          '/api/books/preview-source',
+          {
+            method: 'POST',
+            body: JSON.stringify(book),
+            allowApiErrorFallback: false,
+          },
+        ),
+      },
+    }),
+    () => standaloneApi.previewSourceBook(book),
+  )
+
 const exportStandaloneData = async (): ApiResult<StandaloneBackupData> =>
   withApiFallback(
     async () => ({
@@ -523,6 +545,7 @@ export default {
   deleteBook,
   importLocalTextBook,
   importSourceBook,
+  previewSourceBook,
   exportStandaloneData,
   importStandaloneData,
   clearStandaloneData,

@@ -48,7 +48,7 @@
             最新：{{ book.latestChapterTitle }}
           </div>
           <div v-if="isSourceSearchBook(book)" class="source-book-actions">
-            <el-tag size="small" effect="plain"> 点击卡片打开来源站 </el-tag>
+            <el-tag size="small" effect="plain"> 点击卡片站内预览 </el-tag>
             <el-button
               class="import-book"
               text
@@ -116,7 +116,7 @@ const isBookImporting = (book: BookItem) =>
   isSourceSearchBook(book) && props.importingBookKeys.has(getBookKey(book))
 const getBookActionLabel = (book: BookItem) =>
   isSourceSearchBook(book)
-    ? `在新标签页打开《${book.name}》的来源站详情`
+    ? `预览《${book.name}》的详情和目录`
     : `打开《${book.name}》`
 
 const escapeSvgText = (text: string) =>

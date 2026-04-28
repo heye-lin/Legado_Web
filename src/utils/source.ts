@@ -74,28 +74,205 @@ export const getSourceUniqueKey = (source: Source) =>
 export const getSourceName = (source: Source) =>
   isBookSource(source) ? source.bookSourceName : source.sourceName
 
-const textMatches = (value: string | undefined, searchKey: string) =>
-  value?.includes(searchKey) ?? false
+export type SourceEnabledFilter = 'all' | 'enabled' | 'disabled'
+export type SourceFeatureFilter =
+  | 'all'
+  | 'searchable'
+  | 'unsearchable'
+  | 'cookie'
+  | 'js'
+  | 'login'
+export type SourceSearchField = 'all' | 'name' | 'url' | 'group' | 'comment' | 'rule'
+
+export type SourceMatchOptions = {
+  enabled?: SourceEnabledFilter
+  feature?: SourceFeatureFilter
+  field?: SourceSearchField
+}
+
+const normalizeSearchText = (value: unknown) =>
+  String(value ?? '')
+    .trim()
+    .toLocaleLowerCase()
+
+const collectObjectStrings = (value: unknown, output: string[]) => {
+  if (value === undefined || value === null) return
+  if (typeof value === 'string' || typeof value === 'number') {
+    output.push(String(value))
+    return
+  }
+  if (Array.isArray(value)) {
+    value.forEach(item => collectObjectStrings(item, output))
+    return
+  }
+  if (typeof value !== 'object') return
+  Object.values(value as Record<string, unknown>).forEach(item =>
+    collectObjectStrings(item, output),
+  )
+}
+
+const collectRuleStrings = (source: Source) => {
+  const rules: string[] = []
+  if (isBookSource(source)) {
+    collectObjectStrings(source.searchUrl, rules)
+    collectObjectStrings(source.exploreUrl, rules)
+    collectObjectStrings(source.bookUrlPattern, rules)
+    collectObjectStrings(source.ruleSearch, rules)
+    collectObjectStrings(source.ruleBookInfo, rules)
+    collectObjectStrings(source.ruleToc, rules)
+    collectObjectStrings(source.ruleContent, rules)
+    collectObjectStrings(source.ruleExplore, rules)
+    return rules
+  }
+  collectObjectStrings(source.sortUrl, rules)
+  collectObjectStrings(source.ruleArticles, rules)
+  collectObjectStrings(source.ruleNextPage, rules)
+  collectObjectStrings(source.ruleTitle, rules)
+  collectObjectStrings(source.rulePubDate, rules)
+  collectObjectStrings(source.ruleDescription, rules)
+  collectObjectStrings(source.ruleImage, rules)
+  collectObjectStrings(source.ruleLink, rules)
+  collectObjectStrings(source.ruleContent, rules)
+  collectObjectStrings(source.contentWhitelist, rules)
+  collectObjectStrings(source.contentBlacklist, rules)
+  return rules
+}
+
+const getSourceFieldTexts = (
+  source: Source,
+): Record<SourceSearchField, string[]> => {
+  const name = getSourceName(source)
+  const url = getSourceUniqueKey(source)
+  const group = isBookSource(source)
+    ? source.bookSourceGroup
+    : source.sourceGroup
+  const comment = isBookSource(source)
+    ? source.bookSourceComment
+    : source.sourceComment
+  const rule = collectRuleStrings(source)
+  return {
+    all: [
+      name,
+      url,
+      group,
+      comment,
+      isBookSource(source) ? source.variableComment : source.variableComment,
+      ...rule,
+    ].filter((item): item is string => typeof item === 'string'),
+    name: [name],
+    url: [url],
+    group: group ? [group] : [],
+    comment: comment ? [comment] : [],
+    rule,
+  }
+}
+
+export const sourceHasSearchRule = (source: Source) =>
+  isBookSource(source) &&
+  Boolean(
+    source.searchUrl?.trim() &&
+      source.ruleSearch?.bookList?.trim() &&
+      source.ruleSearch?.name?.trim() &&
+      source.ruleSearch?.bookUrl?.trim(),
+  )
+
+export const sourceUsesJsRule = (source: Source) =>
+  Boolean(
+    source.jsLib?.trim() ||
+      source.loginUi?.trim() ||
+      source.loginCheckJs?.trim() ||
+      source.coverDecodeJs?.trim() ||
+      collectRuleStrings(source).some(rule =>
+        /(^\s*(?:@?js:|<js>)|<js>|java\.|source\.getVariable|source\.setVariable)/i.test(
+          rule,
+        ),
+      ),
+  )
+
+export const sourceNeedsLogin = (source: Source) =>
+  Boolean(source.loginUi?.trim() || source.loginCheckJs?.trim())
+
+export const sourceNeedsCookieJar = (source: Source) =>
+  source.enabledCookieJar === true
+
+const sourceMatchesEnabledFilter = (
+  source: Source,
+  filter: SourceEnabledFilter,
+) => {
+  if (filter === 'all') return true
+  return filter === 'enabled' ? source.enabled === true : source.enabled !== true
+}
+
+const sourceMatchesFeatureFilter = (
+  source: Source,
+  filter: SourceFeatureFilter,
+) => {
+  if (filter === 'all') return true
+  if (filter === 'searchable') return sourceHasSearchRule(source)
+  if (filter === 'unsearchable') return !sourceHasSearchRule(source)
+  if (filter === 'cookie') return sourceNeedsCookieJar(source)
+  if (filter === 'js') return sourceUsesJsRule(source)
+  return sourceNeedsLogin(source)
+}
+
+const normalizeQueryTokens = (searchKey: string) =>
+  normalizeSearchText(searchKey)
+    .split(/\s+/)
+    .map(item => item.trim())
+    .filter(Boolean)
+
+const fieldAlias: Record<string, SourceSearchField> = {
+  n: 'name',
+  name: 'name',
+  名称: 'name',
+  u: 'url',
+  url: 'url',
+  地址: 'url',
+  g: 'group',
+  group: 'group',
+  分组: 'group',
+  c: 'comment',
+  comment: 'comment',
+  备注: 'comment',
+  r: 'rule',
+  rule: 'rule',
+  规则: 'rule',
+}
+
+const tokenMatchesSource = (
+  source: Source,
+  token: string,
+  defaultField: SourceSearchField,
+) => {
+  const fieldMatch = token.match(/^([^:：]+)[:：](.+)$/)
+  const field = fieldMatch?.[1] ? fieldAlias[fieldMatch[1]] : defaultField
+  const keyword = fieldMatch?.[2] ?? token
+  const targetField = field ?? defaultField
+  if (!keyword) return true
+  return getSourceFieldTexts(source)[targetField].some(value =>
+    normalizeSearchText(value).includes(keyword),
+  )
+}
 
 export const isSourceMatches: (source: Source, searchKey: string) => boolean = (
   source,
   searchKey,
-) => {
-  if (isBookSource(source)) {
-    return (
-      textMatches(source.bookSourceName, searchKey) ||
-      textMatches(source.bookSourceUrl, searchKey) ||
-      textMatches(source.bookSourceGroup, searchKey) ||
-      textMatches(source.bookSourceComment, searchKey)
-    )
-  }
-  return (
-    textMatches(source.sourceName, searchKey) ||
-    textMatches(source.sourceUrl, searchKey) ||
-    textMatches(source.sourceGroup, searchKey) ||
-    textMatches(source.sourceComment, searchKey)
+) => isSourceMatchesAdvanced(source, searchKey)
+
+export const isSourceMatchesAdvanced = (
+  source: Source,
+  searchKey: string,
+  {
+    enabled = 'all',
+    feature = 'all',
+    field = 'all',
+  }: SourceMatchOptions = {},
+) =>
+  sourceMatchesEnabledFilter(source, enabled) &&
+  sourceMatchesFeatureFilter(source, feature) &&
+  normalizeQueryTokens(searchKey).every(token =>
+    tokenMatchesSource(source, token, field),
   )
-}
 
 export const convertSourcesToMap = (sources: Source[]): Map<string, Source> => {
   const map = new Map<string, Source>()

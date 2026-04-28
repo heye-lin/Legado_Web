@@ -109,6 +109,19 @@ export type SourceBookImportResult = {
   alreadyOnShelf: boolean
 }
 
+export type SourceBookPreviewChapter = Pick<
+  BookChapter,
+  'index' | 'title' | 'url' | 'isVolume' | 'isVip' | 'isPay' | 'tag'
+>
+
+export type SourceBookPreviewResult = {
+  book: Book
+  chapterCount: number
+  chapters: SourceBookPreviewChapter[]
+  alreadyOnShelf: boolean
+  notes: string[]
+}
+
 export type BookProgress = Pick<
   Book,
   | 'name'

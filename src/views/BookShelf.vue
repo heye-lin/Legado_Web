@@ -259,12 +259,26 @@
         </el-button>
       </template>
     </el-dialog>
+    <source-book-preview-dialog
+      v-model="previewDialogVisible"
+      :book="previewSourceBook"
+      :preview="previewResult"
+      :loading="isPreviewingSourceBook"
+      :error-message="previewErrorMessage"
+      :importing="
+        previewSourceBook === undefined
+          ? false
+          : importingSourceBookKeys.has(previewSourceBook.resultKey)
+      "
+      @import="handleBookImport"
+    />
   </div>
 </template>
 
 <script setup lang="ts">
 import '@/assets/bookshelf.css'
 import '@/assets/fonts/shelffont.css'
+import SourceBookPreviewDialog from '@/components/SourceBookPreviewDialog.vue'
 import SourceSearchPanel from '@/components/SourceSearchPanel.vue'
 import { useBookStore } from '@/store'
 import githubUrl from '@/assets/imgs/github.png'
@@ -325,12 +339,17 @@ const {
   sourceSearchReportsExpanded,
   sourceSearchEmptyMessage,
   importingSourceBookKeys,
+  previewDialogVisible,
+  previewSourceBook,
+  previewResult,
+  previewErrorMessage,
+  isPreviewingSourceBook,
   searchBook,
   openSourceSearchDialog,
   confirmSourceSearchDialog,
   clearSourceSearch,
   handleBookImport,
-  openSourceSearchResult,
+  openSourceBookPreview,
   isSourceSearchBook,
 } = useSourceSearch({
   searchWord,
@@ -425,7 +444,7 @@ const handleBookDelete = async (book: Book) => {
 
 const handleBookClick = (book: Book | SourceSearchBook) => {
   if (isSourceSearchBook(book)) {
-    openSourceSearchResult(book)
+    void openSourceBookPreview(book)
     return
   }
   const { chapterIndex, chapterPos } = getBookReadPosition(book)

@@ -1,5 +1,11 @@
 import API from '@api'
-import type { Book, SourceBookImportResult, SourceSearchBook, SourceSearchReport } from '@/book'
+import type {
+  Book,
+  SourceBookImportResult,
+  SourceBookPreviewResult,
+  SourceSearchBook,
+  SourceSearchReport,
+} from '@/book'
 import { getErrorMessage } from '@/utils/bookshelf'
 import { ElMessage } from 'element-plus'
 import {
@@ -68,6 +74,11 @@ export const useSourceSearch = ({
   const sourceSearchInput = ref('')
   const sourceSearchReportsExpanded = ref(false)
   const importingSourceBookKeys = ref(new Set<string>())
+  const previewDialogVisible = ref(false)
+  const previewSourceBook = ref<SourceSearchBook>()
+  const previewResult = ref<SourceBookPreviewResult>()
+  const previewErrorMessage = ref('')
+  const isPreviewingSourceBook = ref(false)
   let sourceSearchRunId = 0
   let sourceSearchAbortController: AbortController | undefined
 
@@ -186,6 +197,7 @@ export const useSourceSearch = ({
           : `《${imported.book.name}》已加入书架，共 ${imported.chapterCount} 章`,
       )
       clearSourceSearch()
+      previewDialogVisible.value = false
       searchWord.value = ''
     } catch (error) {
       ElMessage.error(`加入书架失败：${getErrorMessage(error)}`)
@@ -194,13 +206,30 @@ export const useSourceSearch = ({
     }
   }
 
-  const openSourceSearchResult = (book: SourceSearchBook) => {
+  const openSourceBookPreview = async (book: SourceSearchBook) => {
     if (!isHttpUrl(book.bookUrl)) {
       ElMessage.warning('书源搜索结果只能打开 http/https 链接')
       return
     }
-    const opened = window.open(book.bookUrl, '_blank', 'noopener,noreferrer')
-    if (opened === null) ElMessage.warning('浏览器阻止了外部详情页弹窗')
+    previewSourceBook.value = book
+    previewResult.value = undefined
+    previewErrorMessage.value = ''
+    previewDialogVisible.value = true
+    isPreviewingSourceBook.value = true
+    try {
+      const result = await API.previewSourceBook(book)
+      if (!result.data.isSuccess) {
+        previewErrorMessage.value = result.data.errorMsg
+        ElMessage.error(`预览失败：${result.data.errorMsg}`)
+        return
+      }
+      previewResult.value = result.data.data
+    } catch (error) {
+      previewErrorMessage.value = getErrorMessage(error)
+      ElMessage.error(`预览失败：${previewErrorMessage.value}`)
+    } finally {
+      isPreviewingSourceBook.value = false
+    }
   }
 
   watch(searchWord, value => {
@@ -227,12 +256,17 @@ export const useSourceSearch = ({
     sourceSearchReportsExpanded,
     sourceSearchEmptyMessage,
     importingSourceBookKeys,
+    previewDialogVisible,
+    previewSourceBook,
+    previewResult,
+    previewErrorMessage,
+    isPreviewingSourceBook,
     searchBook,
     openSourceSearchDialog,
     confirmSourceSearchDialog,
     clearSourceSearch,
     handleBookImport,
-    openSourceSearchResult,
+    openSourceBookPreview,
     isSourceSearchBook,
   }
 }
