@@ -68,4 +68,19 @@ watch(
     margin-right: 20px;
   }
 }
+
+@media screen and (max-width: 750px) {
+  .editor {
+    flex-direction: column;
+    overflow: auto;
+
+    .left,
+    .right {
+      flex: none;
+      width: auto;
+      min-height: 70vh;
+      margin: 0 12px;
+    }
+  }
+}
 </style>

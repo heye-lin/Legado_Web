@@ -15,7 +15,7 @@
   <el-dialog
     v-model="subscriptionDialogVisible"
     title="URL 订阅导入"
-    width="460px"
+    width="min(460px, calc(100vw - 32px))"
   >
     <div class="subscription-dialog">
       <p>输入书源或订阅源 JSON 地址。当前会合并导入，不会清空已有本地源。</p>
@@ -114,7 +114,7 @@ const isImportingSubscription = ref(false)
 const pull = () => {
   const kind = getCurrentSourceKind()
   const loadingMsg = ElMessage({
-    message: '加载中……',
+    message: '正在重新加载源……',
     showClose: true,
     duration: 0,
   })
@@ -124,7 +124,7 @@ const pull = () => {
         store.saveSources(data.data, kind)
         if (store.currentSourceKind === kind) store.changeTabName('editList')
         ElMessage({
-          message: `成功拉取${data.data.length}条${sourceKindDisplayName(kind)}`,
+          message: `已重新加载 ${data.data.length} 条${sourceKindDisplayName(kind)}`,
           type: 'success',
         })
       } else {
@@ -135,7 +135,7 @@ const pull = () => {
       }
     })
     .catch(error => {
-      ElMessage.error(`拉取源失败：${getErrorMessage(error)}`)
+      ElMessage.error(`重新加载源失败：${getErrorMessage(error)}`)
     })
     .finally(() => loadingMsg.close())
 }
@@ -146,12 +146,12 @@ const push = () => {
   store.changeTabName('editList')
   if (sources.length === 0) {
     return ElMessage({
-      message: '空空如也',
+      message: `当前没有可保存的${sourceDisplayName()}，请先导入或编辑源`,
       type: 'info',
     })
   }
   ElMessage({
-    message: '正在推送中',
+    message: `正在保存到「${getApiTargetName()}」`,
     type: 'info',
   })
   API.saveSources(sources, kind)
@@ -161,11 +161,11 @@ const push = () => {
         if (Array.isArray(okData)) {
           let failMsg = ``
           if (sources.length > okData.length) {
-            failMsg = '\n推送失败的源将用红色字体标注!'
+            failMsg = '\n保存失败的源将用红色字体标注!'
             store.setPushReturnSources(okData)
           }
           ElMessage({
-            message: `批量推送源到「${getApiTargetName()}」\n共计：${
+            message: `批量保存源到「${getApiTargetName()}」\n共计：${
               sources.length
             } 条\n成功：${okData.length} 条\n失败：${
               sources.length - okData.length
@@ -175,13 +175,13 @@ const push = () => {
         }
       } else {
         ElMessage({
-          message: `批量推送源失败！\n错误信息：${data.errorMsg}`,
+          message: `批量保存源失败！\n错误信息：${data.errorMsg}`,
           type: 'error',
         })
       }
     })
     .catch(error => {
-      ElMessage.error(`推送源失败：${getErrorMessage(error)}`)
+      ElMessage.error(`保存源失败：${getErrorMessage(error)}`)
     })
 }
 
@@ -363,16 +363,16 @@ const importSubscription = async () => {
 
 const buttons = ref<ToolButton[]>(
   Array.of(
-    { name: '⇈推送源', hotKeys: [], action: push },
-    { name: '⇊拉取源', hotKeys: [], action: pull },
-    { name: '⋙生成源', hotKeys: [], action: convertToTab },
-    { name: '⋘编辑源', hotKeys: [], action: convertToSource },
+    { name: '保存全部源', hotKeys: [], action: push },
+    { name: '重新加载源', hotKeys: [], action: pull },
+    { name: '生成 JSON', hotKeys: [], action: convertToTab },
+    { name: '从 JSON 编辑', hotKeys: [], action: convertToSource },
     { name: '✗清空表单', hotKeys: [], action: clearEdit },
-    { name: '⇏调试源', hotKeys: [], action: debug },
-    { name: '✓保存源', hotKeys: [], action: saveSource },
-    { name: '⇧导出源', hotKeys: [], action: exportSources },
-    { name: '⇩导入源', hotKeys: [], action: importSources },
-    { name: '⇩URL订阅', hotKeys: [], action: openSubscriptionDialog },
+    { name: '调试源', hotKeys: [], action: debug },
+    { name: '保存当前源', hotKeys: [], action: saveSource },
+    { name: '导出全部', hotKeys: [], action: exportSources },
+    { name: '导入 JSON', hotKeys: [], action: importSources },
+    { name: 'URL 订阅', hotKeys: [], action: openSubscriptionDialog },
   ),
 )
 const hotkeysDialogVisible = ref(false)
@@ -447,13 +447,17 @@ const saveHotKeys = () => {
   hotkeysDialogVisible.value = false
 }
 
+const isEditingText = (target: EventTarget | null) =>
+  target instanceof HTMLElement &&
+  target.closest('input, textarea, [contenteditable="true"]') !== null
+
 const bindHotKeys = () => {
-  // hotkeys 默认过滤 INPUT、SELECT、TEXTAREA
   hotkeys.filter = () => true
   buttons.value.forEach(({ hotKeys, action }) => {
     if (hotKeys.length === 0) return
     const combo = hotKeys.join('+')
     hotkeys(combo, event => {
+      if (isEditingText(event.target)) return
       event.preventDefault()
       action.call(null)
     })
@@ -509,10 +513,14 @@ onUnmounted(() => {
   justify-content: center;
 }
 
+.menu {
+  flex: 0 0 auto;
+}
+
 .menu > .el-button {
   margin: 4px;
   padding: 1em;
-  width: 6em;
+  width: 7em;
 }
 
 .subscription-dialog {
@@ -540,6 +548,22 @@ onUnmounted(() => {
     span {
       margin: 0.5em;
     }
+  }
+}
+
+@media screen and (max-width: 750px) {
+  .menu {
+    flex-direction: row;
+    justify-content: flex-start;
+    overflow-x: auto;
+    padding: 8px 12px;
+  }
+
+  .menu > .el-button {
+    flex: 0 0 auto;
+    width: auto;
+    margin: 0 8px 0 0;
+    padding: 0.75em 1em;
   }
 }
 </style>

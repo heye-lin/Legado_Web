@@ -18,7 +18,7 @@
               :type="isSearchingSources ? 'danger' : 'primary'"
               @click="isSearchingSources ? clearSourceSearch() : searchBook()"
             >
-              {{ isSearchingSources ? '取消' : '用书源搜书' }}
+              {{ isSearchingSources ? '取消' : '书源搜索' }}
             </el-button>
           </template>
         </el-input>
@@ -54,7 +54,7 @@
           <div class="setting-title">基本设定</div>
           <div class="setting-item">
             <el-tag
-              :type="apiTargetName === '浏览器本地' ? 'warning' : 'success'"
+              :type="apiTargetTagType"
               size="large"
               class="setting-connect"
             >
@@ -142,7 +142,11 @@
       @drop="handleShelfDrop"
     >
       <div
-        v-if="!sourceSearchActive && !isSearchingSources"
+        v-if="
+          !showStandaloneEmptyState &&
+          !sourceSearchActive &&
+          !isSearchingSources
+        "
         class="shelf-feature-bar"
       >
         <div class="shelf-feature-text">
@@ -235,7 +239,7 @@
           </el-button>
         </div>
         <div class="source-search-tip">
-          点击结果会在新标签页打开来源站详情；当前不能加入书架或在线阅读。当前生产服务会通过同源服务端接口搜索书源，不再依赖浏览器
+          搜索结果会在新标签页打开来源站详情；生产服务通过同源服务端接口搜索书源，不依赖浏览器
           CORS；复杂 JS、登录、CookieJar 和反爬规则仍可能不支持。
         </div>
       </div>
@@ -269,7 +273,7 @@
       <div v-else-if="showLocalSearchEmptyState" class="source-search-empty">
         本地书架没有匹配「{{
           searchWord.trim()
-        }}」的书籍。可清空关键词，或点击“用书源搜书”搜索在线来源。
+        }}」的书籍。可清空关键词，或点击“书源搜索”搜索在线来源。
       </div>
       <div
         v-else-if="sourceSearchActive && books.length === 0"
@@ -285,13 +289,13 @@
       ></book-items>
       <div v-if="isDraggingFile" class="drag-import-mask">
         <div class="drag-import-title">释放鼠标导入 TXT</div>
-        <div class="drag-import-description">TXT 会保存在浏览器本地书架中</div>
+        <div class="drag-import-description">{{ dragImportDescription }}</div>
       </div>
     </div>
     <el-dialog
       v-model="sourceSearchDialogVisible"
-      title="书籍搜索"
-      width="420px"
+      title="书源搜索"
+      width="min(420px, calc(100vw - 32px))"
     >
       <div class="source-search-dialog">
         <p>从已导入并启用的书源中搜索书籍。未导入书源时，请先进入书源管理。</p>
@@ -367,7 +371,7 @@ const { loadingWrapper, isLoading } = useLoading(
 
 // 书架书籍和本地搜索
 const searchWord = ref('')
-const searchPlaceholder = '输入书名筛选本地；点击右侧按钮用书源搜书'
+const searchPlaceholder = '筛选本地书籍；右侧可书源搜索'
 const sourceSearchBooks = shallowRef<SourceSearchBook[]>([])
 const sourceSearchReports = ref<SourceSearchReport[]>([])
 const sourceSearchActive = ref(false)
@@ -379,6 +383,20 @@ const sourceSearchReportsExpanded = ref(false)
 const apiTargetName = ref(getApiTargetName())
 let sourceSearchRunId = 0
 let sourceSearchAbortController: AbortController | undefined
+const apiTargetTagType = computed(() =>
+  apiTargetName.value === 'PostgreSQL 持久化'
+    ? 'success'
+    : apiTargetName.value === '浏览器本地'
+      ? 'warning'
+      : 'info',
+)
+const dragImportDescription = computed(() =>
+  apiTargetName.value === 'PostgreSQL 持久化'
+    ? 'TXT 会保存到 PostgreSQL 持久化书架'
+    : apiTargetName.value === '浏览器本地'
+      ? 'TXT 会保存到浏览器本地书架'
+      : 'TXT 会保存到当前可用数据存储',
+)
 const books = computed(() =>
   sourceSearchActive.value
     ? sourceSearchBooks.value
@@ -417,13 +435,16 @@ const sourceSearchReportStatusOrder: SourceSearchReport['status'][] = [
   'skipped',
 ]
 const sourceSearchReportCountItems = computed(() =>
-  sourceSearchReportStatusOrder.map(status => ({
-    status,
-    label: sourceSearchReportMeta[status].label,
-    type: sourceSearchReportMeta[status].type,
-    count: sourceSearchReports.value.filter(report => report.status === status)
-      .length,
-  })),
+  sourceSearchReportStatusOrder
+    .map(status => ({
+      status,
+      label: sourceSearchReportMeta[status].label,
+      type: sourceSearchReportMeta[status].type,
+      count: sourceSearchReports.value.filter(
+        report => report.status === status,
+      ).length,
+    }))
+    .filter(item => item.count > 0),
 )
 const sourceSearchIssueReports = computed(() =>
   sourceSearchReports.value.filter(

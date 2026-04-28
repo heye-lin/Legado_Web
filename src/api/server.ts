@@ -409,7 +409,11 @@ const getProxyImageUrl = (
 ) => standaloneApi.getProxyImageUrl(bookUrl, src, width)
 
 export const getApiTargetName = () =>
-  serverAvailable === false ? '浏览器本地' : 'PostgreSQL 持久化'
+  serverAvailable === undefined
+    ? '检测中'
+    : serverAvailable
+      ? 'PostgreSQL 持久化'
+      : '浏览器本地'
 
 export const subscribeApiAvailability = (
   listener: (available: boolean | undefined) => void,

@@ -39,14 +39,17 @@ const FORBIDDEN_PROXY_HEADER_NAMES = new Set([
   'transfer-encoding',
   'upgrade',
 ])
+const SOURCE_SEARCH_HEADER_EXCEPTIONS = new Set(['origin', 'referer'])
 const FORBIDDEN_PROXY_HEADER_PREFIXES = ['proxy-', 'sec-']
 const SOURCE_SEARCH_CONCURRENCY = 8
 const SOURCE_SEARCH_TIMEOUT_MS = 6_000
 const SOURCE_SEARCH_RESULT_LIMIT = 50
-const SEARCH_KEY_TOKENS = ['{{key}}', '{{keyword}}', '{{searchKey}}']
 const COMPLEX_LEGADO_RULE_PATTERN =
-  /(^\s*(js:|@js:|xpath:|json:|regex:)|@js\b|<js>|&&|\|\|)/i
+  /(^\s*(js:|@js:|xpath:|@xpath:|regex:)|@js\b|<js>|java\.|source\.getVariable|source\.setVariable)/i
+const COMPLEX_SEARCH_URL_PATTERN =
+  /(^\s*(@?js:|<js>)|<js>|java\.ajax|java\.|source\.getVariable|source\.setVariable|buildRequest\()/i
 const SELECTOR_INDEX_PATTERN = /^(.*)\.(-?\d+)(?::(-?\d+))?$/
+const BRACKET_SELECTOR_INDEX_PATTERN = /^(.*)\[(-?\d+)\]$/
 const JSON_ACCESSOR_PATTERN =
   /^[A-Za-z_$][\w$]*(?:\[(?:-?\d+|\*)\])?(?:\.[A-Za-z_$][\w$]*(?:\[(?:-?\d+|\*)\])?)*$/
 const GZIP_MAGIC_0 = 0x1f
@@ -647,30 +650,35 @@ const isPrivateIp = ip => {
   return true
 }
 
-const validatePublicUrl = async rawUrl => {
+const validatePublicUrl = async (rawUrl, label = '远程地址') => {
   const parsed = new URL(rawUrl)
   if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
-    throw new Error('订阅地址必须是 http/https URL')
+    throw new Error(`${label}必须是 http/https URL`)
   }
   const addresses = await dns.lookup(parsed.hostname, { all: true })
   if (
     addresses.length === 0 ||
     addresses.some(address => isPrivateIp(address.address))
   ) {
-    throw new Error('订阅地址域名不是公网地址')
+    throw new Error(`${label}域名不是公网地址`)
   }
   return parsed
 }
 
-const isForbiddenProxyHeader = name => {
+const isForbiddenProxyHeader = (name, { allowOriginReferer = false } = {}) => {
   const lowerName = name.toLocaleLowerCase()
+  if (allowOriginReferer && SOURCE_SEARCH_HEADER_EXCEPTIONS.has(lowerName)) {
+    return FORBIDDEN_PROXY_HEADER_PREFIXES.some(prefix =>
+      lowerName.startsWith(prefix),
+    )
+  }
   return (
     FORBIDDEN_PROXY_HEADER_NAMES.has(lowerName) ||
     FORBIDDEN_PROXY_HEADER_PREFIXES.some(prefix => lowerName.startsWith(prefix))
   )
 }
 
-const normalizeProxyHeaders = headers => {
+const normalizeProxyHeaders = (headers, options) => {
   const result = {
     Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
     'Accept-Encoding': 'identity',
@@ -684,13 +692,31 @@ const normalizeProxyHeaders = headers => {
     if (
       typeof value !== 'string' ||
       !normalizedKey ||
-      isForbiddenProxyHeader(normalizedKey)
+      isForbiddenProxyHeader(normalizedKey, options)
     ) {
       return
     }
     result[normalizedKey] = value
   })
   return result
+}
+
+const hasHeader = (headers, name) =>
+  Object.keys(headers).some(
+    key => key.toLocaleLowerCase() === name.toLocaleLowerCase(),
+  )
+
+const removeBodyHeaders = headers =>
+  Object.fromEntries(
+    Object.entries(headers).filter(([key]) => {
+      const lowerKey = key.toLocaleLowerCase()
+      return lowerKey !== 'content-length' && lowerKey !== 'content-type'
+    }),
+  )
+
+const encodeRequestBody = body => {
+  if (typeof body !== 'string' || body.length === 0) return undefined
+  return Buffer.from(body)
 }
 
 const decodeResponseContent = (content, contentEncoding, limit) => {
@@ -714,6 +740,42 @@ const decodeResponseContent = (content, contentEncoding, limit) => {
   return decoded
 }
 
+const normalizeCharset = charset => {
+  const normalized = charset?.trim().toLocaleLowerCase()
+  if (!normalized) return undefined
+  if (normalized === 'gb2312') return 'gbk'
+  if (normalized === 'utf8') return 'utf-8'
+  return normalized
+}
+
+const detectHeaderCharset = headers => {
+  const contentType = Object.entries(headers ?? {}).find(
+    ([key]) => key.toLocaleLowerCase() === 'content-type',
+  )?.[1]
+  if (typeof contentType !== 'string') return undefined
+  return normalizeCharset(contentType.match(/charset=([^;\s]+)/i)?.[1])
+}
+
+const detectHtmlCharset = content => {
+  const head = content.subarray(0, 4096).toString('latin1')
+  return normalizeCharset(
+    head.match(/<meta[^>]+charset=["']?\s*([^"'\s/>]+)/i)?.[1],
+  )
+}
+
+const decodeSourceText = (content, headers, configuredCharset) => {
+  const charset =
+    normalizeCharset(configuredCharset) ??
+    detectHeaderCharset(headers) ??
+    detectHtmlCharset(content) ??
+    'utf-8'
+  try {
+    return new TextDecoder(charset).decode(content).replace(/^\uFEFF/, '')
+  } catch {
+    return new TextDecoder('utf-8').decode(content).replace(/^\uFEFF/, '')
+  }
+}
+
 const requestBytes = async (
   rawUrl,
   {
@@ -723,14 +785,23 @@ const requestBytes = async (
     timeout = SOURCE_FETCH_TIMEOUT_MS,
     limit = MAX_SOURCE_FETCH_BYTES,
     redirect = 0,
+    urlLabel = '远程地址',
   } = {},
 ) => {
-  const url = await validatePublicUrl(rawUrl)
+  const url = await validatePublicUrl(rawUrl, urlLabel)
+  const bodyBuffer = encodeRequestBody(body)
+  const requestHeaders = { ...headers }
+  if (
+    bodyBuffer !== undefined &&
+    !hasHeader(requestHeaders, 'content-length')
+  ) {
+    requestHeaders['Content-Length'] = String(bodyBuffer.byteLength)
+  }
   return new Promise((resolve, reject) => {
     const client = url.protocol === 'https:' ? https : http
     const request = client.request(
       url,
-      { method, headers, timeout },
+      { method, headers: requestHeaders, timeout },
       async response => {
         const statusCode = response.statusCode ?? 0
         if (
@@ -745,14 +816,21 @@ const requestBytes = async (
           }
           try {
             const nextUrl = new URL(response.headers.location, url).toString()
+            const shouldDropBody =
+              method !== 'GET' &&
+              (statusCode === 301 || statusCode === 302 || statusCode === 303)
+            const nextMethod = shouldDropBody ? 'GET' : method
             resolve(
               await requestBytes(nextUrl, {
-                method,
-                headers,
-                body,
+                method: nextMethod,
+                headers: shouldDropBody
+                  ? removeBodyHeaders(requestHeaders)
+                  : requestHeaders,
+                body: shouldDropBody ? undefined : body,
                 timeout,
                 limit,
                 redirect: redirect + 1,
+                urlLabel,
               }),
             )
           } catch (error) {
@@ -781,6 +859,7 @@ const requestBytes = async (
           try {
             resolve({
               finalUrl: response.responseUrl ?? url.toString(),
+              headers: response.headers,
               content: decodeResponseContent(
                 Buffer.concat(chunks),
                 response.headers['content-encoding'],
@@ -797,7 +876,7 @@ const requestBytes = async (
       request.destroy(new Error('远程服务器响应超时')),
     )
     request.on('error', reject)
-    if (typeof body === 'string' && body.length > 0) request.write(body)
+    if (bodyBuffer !== undefined) request.write(bodyBuffer)
     request.end()
   })
 }
@@ -810,12 +889,16 @@ const fetchSourceText = async requestBody => {
   if (method !== 'GET' && method !== 'POST') {
     throw new Error('源请求只支持 GET/POST')
   }
-  const { finalUrl, content } = await requestBytes(requestBody.url, {
+  const { finalUrl, headers, content } = await requestBytes(requestBody.url, {
     method,
     headers: normalizeProxyHeaders(requestBody.headers),
     body: typeof requestBody.body === 'string' ? requestBody.body : undefined,
+    urlLabel: '源请求地址',
   })
-  return { finalUrl, text: content.toString('utf8') }
+  return {
+    finalUrl,
+    text: decodeSourceText(content, headers, requestBody.charset),
+  }
 }
 
 const unique = values => Array.from(new Set(values))
@@ -835,7 +918,7 @@ const normalizeHeaderToken = value =>
     .replace(/^['"]|['"]$/g, '')
     .trim()
 
-const parseSourceHeaders = rawHeader => {
+const parseSourceHeaders = (rawHeader, options) => {
   const headers = {}
   const warnings = []
   const trimmed = rawHeader?.trim()
@@ -845,7 +928,7 @@ const parseSourceHeaders = rawHeader => {
     const key = normalizeHeaderToken(rawKey)
     const value = normalizeHeaderToken(rawValue)
     if (!key || !value) return
-    if (isForbiddenProxyHeader(key)) {
+    if (isForbiddenProxyHeader(key, options)) {
       warnings.push(`已忽略代理禁止转发的请求头 ${key}`)
       return
     }
@@ -876,14 +959,29 @@ const parseSourceHeaders = rawHeader => {
 
 const fillSearchKey = (template, searchKey) => {
   const encodedKey = encodeURIComponent(searchKey)
-  const withSearchKey = SEARCH_KEY_TOKENS.reduce(
-    (text, token) => text.split(token).join(encodedKey),
-    template,
-  )
-  return withSearchKey
+  return template
+    .replace(/\{\{\s*(?:key|keyword|searchKey)\s*\}\}/g, encodedKey)
     .replace(/\{\{\s*\(?\s*page\s*-\s*1\s*\)?\s*\*\s*\d+\s*\}\}/g, '0')
-    .split('{{page}}')
-    .join('1')
+    .replace(/\{\{\s*(?:page|searchPage)\s*\}\}/g, '1')
+}
+
+const fillSearchPage = template =>
+  template
+    .replace(/\{\{\s*\(?\s*page\s*-\s*1\s*\)?\s*\*\s*\d+\s*\}\}/g, '0')
+    .replace(/\{\{\s*(?:page|searchPage)\s*\}\}/g, '1')
+
+const isSupportedSearchTemplateExpression = expression =>
+  /^(?:key|keyword|searchKey|page|searchPage)$/i.test(expression) ||
+  /^\(?\s*page\s*-\s*1\s*\)?\s*\*\s*\d+$/i.test(expression)
+
+const findUnsupportedSearchUrlExpression = value => {
+  const text = String(value ?? '')
+  if (COMPLEX_SEARCH_URL_PATTERN.test(text)) return 'JS/动态请求'
+  for (const match of text.matchAll(/\{\{([\s\S]*?)\}\}/g)) {
+    const expression = match[1].trim()
+    if (!isSupportedSearchTemplateExpression(expression)) return match[0]
+  }
+  return ''
 }
 
 const splitSearchUrl = searchUrl => {
@@ -892,7 +990,7 @@ const splitSearchUrl = searchUrl => {
   const inlineConfig =
     configMatch === null
       ? {}
-      : JSON.parse(trimmed.slice(configMatch.index + 1).trim())
+      : JSON.parse(fillSearchPage(trimmed.slice(configMatch.index + 1).trim()))
   const urlAndBody =
     configMatch === null ? trimmed : trimmed.slice(0, configMatch.index).trim()
   const bodySeparatorIndex = urlAndBody.indexOf('@')
@@ -906,6 +1004,45 @@ const splitSearchUrl = searchUrl => {
   }
 }
 
+const renderSearchTemplateValue = (value, searchKey) => {
+  if (typeof value === 'string') return fillSearchKey(value, searchKey)
+  if (Array.isArray(value)) {
+    return value.map(item => renderSearchTemplateValue(item, searchKey))
+  }
+  if (isRecord(value)) {
+    return Object.fromEntries(
+      Object.entries(value).map(([key, child]) => [
+        key,
+        renderSearchTemplateValue(child, searchKey),
+      ]),
+    )
+  }
+  return value
+}
+
+const serializeSearchBody = (body, searchKey) => {
+  if (typeof body === 'string') {
+    return {
+      contentType: 'application/x-www-form-urlencoded;charset=UTF-8',
+      body: fillSearchKey(body, searchKey),
+    }
+  }
+  if (isRecord(body) || Array.isArray(body)) {
+    return {
+      contentType: 'application/json;charset=UTF-8',
+      body: JSON.stringify(renderSearchTemplateValue(body, searchKey)),
+    }
+  }
+  return { contentType: 'application/x-www-form-urlencoded;charset=UTF-8' }
+}
+
+const applyDefaultSourceSearchHeaders = (headers, requestUrl, method) => {
+  const origin = new URL(requestUrl).origin
+  if (!hasHeader(headers, 'referer')) headers.Referer = `${origin}/`
+  if (method === 'POST' && !hasHeader(headers, 'origin'))
+    headers.Origin = origin
+}
+
 const buildSourceSearchRequest = (source, searchKey) => {
   const searchUrl = source.searchUrl?.trim()
   if (!searchUrl) throw new Error('未配置搜索地址')
@@ -915,41 +1052,69 @@ const buildSourceSearchRequest = (source, searchKey) => {
     fillSearchKey(url, searchKey),
     source.bookSourceUrl,
   ).toString()
-  const { headers, warnings } = parseSourceHeaders(source.header)
+  const { headers, warnings } = parseSourceHeaders(source.header, {
+    allowOriginReferer: true,
+  })
   if (isRecord(config.headers)) {
     Object.entries(config.headers).forEach(([key, value]) => {
       const normalizedKey = normalizeHeaderToken(key)
-      if (
-        typeof value === 'string' &&
-        normalizedKey &&
-        !isForbiddenProxyHeader(normalizedKey)
-      ) {
+      if (typeof value !== 'string' || !normalizedKey) return
+      if (isForbiddenProxyHeader(normalizedKey, { allowOriginReferer: true })) {
+        warnings.push(`已忽略代理禁止转发的请求头 ${normalizedKey}`)
+      } else {
         headers[normalizedKey] = value
       }
     })
   }
   const method =
     typeof config.method === 'string' ? config.method.toUpperCase() : undefined
+  const charset =
+    typeof config.charset === 'string'
+      ? config.charset
+      : typeof config.encoding === 'string'
+        ? config.encoding
+        : undefined
 
-  if (body === undefined && method !== 'POST') {
-    return { url: requestUrl, method: 'GET', headers, warnings }
+  const requestMethod =
+    body === undefined && method !== 'POST'
+      ? 'GET'
+      : method === 'GET'
+        ? 'GET'
+        : 'POST'
+  const serializedBody = serializeSearchBody(body, searchKey)
+  applyDefaultSourceSearchHeaders(headers, requestUrl, requestMethod)
+
+  if (requestMethod === 'GET') {
+    return {
+      url: requestUrl,
+      method: requestMethod,
+      headers,
+      warnings,
+      charset,
+    }
   }
 
-  if (
-    !Object.keys(headers).some(
-      key => key.toLocaleLowerCase() === 'content-type',
-    )
-  ) {
-    headers['Content-Type'] = 'application/x-www-form-urlencoded;charset=UTF-8'
-  }
+  if (!hasHeader(headers, 'content-type'))
+    headers['Content-Type'] = serializedBody.contentType
   return {
     url: requestUrl,
-    method: method === 'GET' ? 'GET' : 'POST',
+    method: requestMethod,
     headers,
-    body: typeof body === 'string' ? fillSearchKey(body, searchKey) : undefined,
+    body: serializedBody.body,
     warnings,
+    charset,
   }
 }
+
+const RULE_ATTRIBUTE_NAMES = new Set([
+  'text',
+  'html',
+  'href',
+  'src',
+  'alt',
+  'title',
+  'content',
+])
 
 const parseRule = rule => {
   const trimmed = rule?.trim()
@@ -957,12 +1122,19 @@ const parseRule = rule => {
 
   const [ruleBody, ...replacements] = trimmed.split('##')
   const ruleParts = ruleBody.split('@').map(part => part.trim())
+  const singleRule = ruleParts[0]?.toLocaleLowerCase()
   if (ruleParts.length === 1)
-    return {
-      selectors: [ruleParts[0]].filter(Boolean),
-      attribute: 'text',
-      replacements: replacements.filter(Boolean),
-    }
+    return RULE_ATTRIBUTE_NAMES.has(singleRule)
+      ? {
+          selectors: [],
+          attribute: singleRule,
+          replacements: replacements.filter(Boolean),
+        }
+      : {
+          selectors: [ruleParts[0]].filter(Boolean),
+          attribute: 'text',
+          replacements: replacements.filter(Boolean),
+        }
 
   return {
     selectors: ruleParts.slice(0, -1).filter(Boolean),
@@ -971,14 +1143,25 @@ const parseRule = rule => {
   }
 }
 
-const applyRuleReplacements = (value, replacements) =>
-  replacements.reduce((text, pattern) => {
-    try {
-      return text.replace(new RegExp(pattern, 'g'), '')
-    } catch {
-      return text.split(pattern).join('')
-    }
-  }, value)
+const replaceRuleText = (value, pattern, replacement) => {
+  try {
+    return value.replace(new RegExp(pattern, 'g'), replacement)
+  } catch {
+    return value.split(pattern).join(replacement)
+  }
+}
+
+const applyRuleReplacements = (value, replacements) => {
+  let text = value
+  for (let index = 0; index < replacements.length; index += 1) {
+    const pattern = replacements[index]
+    const replacement =
+      index + 1 < replacements.length ? replacements[index + 1] : ''
+    text = replaceRuleText(text, pattern, replacement)
+    if (index + 1 < replacements.length) index += 1
+  }
+  return text
+}
 
 const normalizeRuleText = value => {
   if (value === undefined || value === null) return ''
@@ -989,16 +1172,34 @@ const normalizeRuleText = value => {
   return JSON.stringify(value)
 }
 
+const normalizeLegadoSelector = selector =>
+  selector
+    .trim()
+    .replace(/^@@/, '')
+    .replace(/^@?css:/i, '')
+    .replace(/^class\./i, '.')
+    .replace(/^id\./i, '#')
+    .replace(/^tag\./i, '')
+    .trim()
+
+const looksLikeCssClassOrIdEndingWithDigit = selector =>
+  /(^|[\s>+~,(])([.#])[A-Za-z_-][\w-]*\d$/.test(selector)
+
 const selectorWithIndex = selector => {
   const trimmed = selector.trim()
-  const match = trimmed.match(SELECTOR_INDEX_PATTERN)
+  if (looksLikeCssClassOrIdEndingWithDigit(trimmed)) {
+    return { selector: normalizeLegadoSelector(trimmed) }
+  }
+  const match =
+    trimmed.match(BRACKET_SELECTOR_INDEX_PATTERN) ??
+    trimmed.match(SELECTOR_INDEX_PATTERN)
   if (match === null) return { selector: trimmed }
 
   const cssSelector = match[1].trim()
   if (!cssSelector) return { selector: trimmed }
 
   return {
-    selector: cssSelector,
+    selector: normalizeLegadoSelector(cssSelector),
     startIndex: Number(match[2]),
     endIndex: match[3] === undefined ? undefined : Number(match[3]),
   }
@@ -1018,12 +1219,39 @@ const applySelectorIndex = (nodes, startIndex, endIndex) => {
   return nodes.slice(start, upperBound)
 }
 
+const findSelectorNodes = ($, scope, selector) => {
+  if (selector === '') return [scope]
+  if (selector === 'children') return $(scope).children().toArray()
+  if (selector.startsWith('text.')) {
+    const text = selector.slice(5)
+    return $(scope)
+      .find('*')
+      .toArray()
+      .filter(node => $(node).text().includes(text))
+  }
+
+  const currentNode =
+    scope.type === 'root' || !$(scope).is(selector) ? [] : [scope]
+  return currentNode.concat($(scope).find(selector).toArray())
+}
+
 const selectRuleNodes = ($, scopes, rawSelector) => {
-  const { selector, startIndex, endIndex } = selectorWithIndex(rawSelector)
-  return scopes.flatMap(scope => {
-    const nodes = selector === '' ? [scope] : $(scope).find(selector).toArray()
-    return applySelectorIndex(nodes, startIndex, endIndex)
-  })
+  let lastError
+  for (const alternative of splitRuleAlternatives(rawSelector)) {
+    try {
+      const { selector, startIndex, endIndex } = selectorWithIndex(alternative)
+      const nodes = scopes.flatMap(scope => {
+        const normalizedSelector = normalizeLegadoSelector(selector)
+        const selected = findSelectorNodes($, scope, normalizedSelector)
+        return applySelectorIndex(selected, startIndex, endIndex)
+      })
+      if (nodes.length > 0) return nodes
+    } catch (error) {
+      lastError = error
+    }
+  }
+  if (lastError !== undefined) throw lastError
+  return []
 }
 
 const selectRuleTarget = ($, scope, selectors) => {
@@ -1034,7 +1262,7 @@ const selectRuleTarget = ($, scope, selectors) => {
   return nodes[0] === undefined ? undefined : $(nodes[0])
 }
 
-const readRuleValue = ($, scope, rule, baseUrl) => {
+const readSingleRuleValue = ($, scope, rule, baseUrl) => {
   const parsedRule = parseRule(rule)
   if (parsedRule === undefined) return ''
 
@@ -1066,6 +1294,25 @@ const readRuleValue = ($, scope, rule, baseUrl) => {
   return applyRuleReplacements(attrValue, parsedRule.replacements)
 }
 
+const readRuleValue = ($, scope, rule, baseUrl) => {
+  const trimmed = rule?.trim()
+  if (!trimmed) return ''
+
+  const [ruleBody, ...replacements] = trimmed.split('##')
+  for (const alternative of splitRuleAlternatives(ruleBody)) {
+    const value = splitRuleConjunctions(alternative)
+      .map(part => readSingleRuleValue($, scope, part, baseUrl))
+      .filter(Boolean)
+      .join(' ')
+    const normalizedValue = applyRuleReplacements(
+      value.trim(),
+      replacements.filter(Boolean),
+    )
+    if (normalizedValue) return normalizedValue
+  }
+  return ''
+}
+
 const readOptionalRuleValue = ($, scope, rule, baseUrl) => {
   try {
     return readRuleValue($, scope, rule, baseUrl)
@@ -1074,7 +1321,13 @@ const readOptionalRuleValue = ($, scope, rule, baseUrl) => {
   }
 }
 
-const isJsonPathRule = rule => /^\s*\$/.test(rule ?? '')
+const normalizeJsonRule = rule =>
+  String(rule ?? '')
+    .trim()
+    .replace(/^@?json:/i, '')
+    .trim()
+
+const isJsonPathRule = rule => /^\$/.test(normalizeJsonRule(rule))
 
 const splitRuleAlternatives = rule =>
   String(rule ?? '')
@@ -1088,13 +1341,48 @@ const splitRuleConjunctions = rule =>
     .map(item => item.trim())
     .filter(Boolean)
 
-const isJsonAccessorRule = rule =>
-  isJsonPathRule(rule) || JSON_ACCESSOR_PATTERN.test(rule ?? '')
+const selectBookListNodes = ($, listRule) => {
+  let lastError
+  for (const alternative of splitRuleAlternatives(listRule)) {
+    try {
+      const nodes = alternative
+        .split('@')
+        .map(item => item.trim())
+        .filter(Boolean)
+        .reduce(
+          (current, selector) => selectRuleNodes($, current, selector),
+          [$.root().get(0)],
+        )
+      if (nodes.length > 0) return nodes
+    } catch (error) {
+      lastError = error
+    }
+  }
+  if (lastError !== undefined) throw lastError
+  return []
+}
+
+const isJsonAccessorRule = rule => {
+  const normalizedRule = normalizeJsonRule(rule)
+  return (
+    isJsonPathRule(normalizedRule) || JSON_ACCESSOR_PATTERN.test(normalizedRule)
+  )
+}
 
 const isJsonPathUnionRule = rule => {
   const alternatives = splitRuleAlternatives(rule)
   return alternatives.length > 0 && alternatives.every(isJsonAccessorRule)
 }
+
+const isExplicitJsonListRule = rule =>
+  splitRuleAlternatives(rule).every(alternative => {
+    const trimmed = alternative.trim()
+    return /^@?json:/i.test(trimmed) || trimmed.startsWith('$')
+  })
+
+const shouldParseSearchResponseAsJson = (listRule, text) =>
+  isJsonPathUnionRule(listRule) &&
+  (isExplicitJsonListRule(listRule) || /^[\s\uFEFF]*[\[{]/.test(text))
 
 const isJsonPathCompoundRule = rule => {
   const alternatives = splitRuleAlternatives(rule)
@@ -1120,50 +1408,73 @@ const collectJsonProperty = (value, property, results = []) => {
   return results
 }
 
+const selectJsonBracketValues = (value, selector) => {
+  if (selector === '*') {
+    if (Array.isArray(value)) return value
+    return isRecord(value) ? Object.values(value) : []
+  }
+
+  if (selector.includes(':')) {
+    if (!Array.isArray(value)) return []
+    const [startText, endText] = selector.split(':')
+    const start =
+      startText === '' ? 0 : normalizeIndex(Number(startText), value.length)
+    const end =
+      endText === ''
+        ? value.length
+        : normalizeIndex(Number(endText), value.length)
+    return value.slice(Math.max(0, start), Math.max(0, end))
+  }
+
+  if (!Array.isArray(value)) return []
+  const normalizedIndex = normalizeIndex(Number(selector), value.length)
+  return value[normalizedIndex] === undefined ? [] : [value[normalizedIndex]]
+}
+
 const expandJsonToken = (value, token) => {
+  const bracketOnlyMatch = token.match(/^\[([^\]]+)\]$/)
+  if (bracketOnlyMatch !== null) {
+    return selectJsonBracketValues(value, bracketOnlyMatch[1])
+  }
+
   if (token === '*') {
     if (Array.isArray(value)) return value
     return isRecord(value) ? Object.values(value) : []
   }
 
-  const match = token.match(/^([^[\]]+)(?:\[(-?\d+|\*)\])?$/)
+  const match = token.match(/^([^[\]]+)(?:\[([^\]]+)\])?$/)
   if (match === null || !isRecord(value)) return []
 
   const child = value[match[1]]
-  const index = match[2]
-  if (index === undefined) return [child]
-  if (index === '*') {
-    if (Array.isArray(child)) return child
-    return isRecord(child) ? Object.values(child) : []
-  }
-
-  if (!Array.isArray(child)) return []
-  const normalizedIndex = normalizeIndex(Number(index), child.length)
-  return child[normalizedIndex] === undefined ? [] : [child[normalizedIndex]]
+  const selector = match[2]
+  return selector === undefined
+    ? [child]
+    : selectJsonBracketValues(child, selector)
 }
 
 const readJsonPathValues = (value, path) => {
-  const trimmed = path.trim()
+  const trimmed = normalizeJsonRule(path)
   if (trimmed === '$') return [value]
   if (trimmed.startsWith('$..')) {
     const [property, ...rest] = trimmed.slice(3).split('.').filter(Boolean)
     if (!property) return []
-    const propertyMatch = property.match(/^([^[\]]+)(?:\[\*\])?$/)
+    const propertyMatch = property.match(/^([^[\]]+)(?:\[([^\]]+)\])?$/)
     if (propertyMatch === null) return []
     const values = collectJsonProperty(value, propertyMatch[1])
+    const selector = propertyMatch[2]
     const expanded =
-      property.endsWith('[*]') || Array.isArray(values[0])
-        ? values.flatMap(item => (Array.isArray(item) ? item : [item]))
-        : values
+      selector === undefined
+        ? values
+        : values.flatMap(item => selectJsonBracketValues(item, selector))
     return rest.reduce(
       (current, token) => current.flatMap(item => expandJsonToken(item, token)),
       expanded,
     )
   }
-  if (!trimmed.startsWith('$.')) return []
+  if (!trimmed.startsWith('$.') && !trimmed.startsWith('$[')) return []
 
   return trimmed
-    .slice(2)
+    .slice(trimmed.startsWith('$.') ? 2 : 1)
     .split('.')
     .filter(Boolean)
     .reduce(
@@ -1173,7 +1484,7 @@ const readJsonPathValues = (value, path) => {
 }
 
 const readJsonAccessorValues = (value, path) => {
-  const trimmed = path.trim()
+  const trimmed = normalizeJsonRule(path)
   if (isJsonPathRule(trimmed)) return readJsonPathValues(value, trimmed)
   if (!JSON_ACCESSOR_PATTERN.test(trimmed)) return []
 
@@ -1196,7 +1507,7 @@ const readJsonPathUnionValues = (value, rule) => {
   const results = []
   const seen = new Set()
   splitRuleAlternatives(rule).forEach(path => {
-    readJsonAccessorValues(value, path).forEach(item => {
+    readJsonAccessorValues(value, normalizeJsonRule(path)).forEach(item => {
       const key = JSON.stringify(item)
       if (seen.has(key)) return
       seen.add(key)
@@ -1217,7 +1528,7 @@ const readJsonCompoundText = (item, ruleBody) =>
     .find(Boolean) ?? ''
 
 const stripJsonVariableOperators = ruleBody =>
-  ruleBody.replace(/@put:\{[^}]+\}/g, '')
+  normalizeJsonRule(ruleBody).replace(/@put:\{[^}]+\}/g, '')
 
 const normalizeJsonRuleBody = (ruleBody, item) =>
   stripJsonVariableOperators(ruleBody).replace(
@@ -1384,7 +1695,7 @@ const appendWarnings = (message, warnings) => {
 
 const isSelectorSyntaxError = error =>
   error instanceof Error &&
-  /(selector|pseudo|expected|unmatched|empty sub-selector|invalid)/i.test(
+  /(selector|pseudo|expected|unmatched|empty sub-selector|not a valid selector)/i.test(
     error.message,
   )
 
@@ -1395,6 +1706,24 @@ const isAnonymousAccessRejected = (error, source) =>
     Boolean(source.loginUrl) ||
     Boolean(source.loginUi) ||
     Boolean(source.loginCheckJs))
+
+const parseJsonSearchResponse = text => {
+  try {
+    return JSON.parse(text)
+  } catch (error) {
+    throw Object.assign(
+      new Error(
+        `响应不是合法 JSON，无法按 JSONPath 搜索列表规则解析：${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      ),
+      { sourceSearchCode: 'JSON_RESPONSE_PARSE' },
+    )
+  }
+}
+
+const isJsonResponseParseError = error =>
+  isRecord(error) && error.sourceSearchCode === 'JSON_RESPONSE_PARSE'
 
 const searchSingleBookSource = async (source, searchKey) => {
   if (source.bookSourceUrl === 'https://example.com') {
@@ -1430,6 +1759,19 @@ const searchSingleBookSource = async (source, searchKey) => {
     return {
       books: [],
       report: sourceSearchReport(source, 'skipped', '未配置搜索地址'),
+    }
+  }
+  const unsupportedSearchUrlExpression = findUnsupportedSearchUrlExpression(
+    source.searchUrl,
+  )
+  if (unsupportedSearchUrlExpression) {
+    return {
+      books: [],
+      report: sourceSearchReport(
+        source,
+        'unsupported',
+        `搜索地址表达式「${unsupportedSearchUrlExpression}」需要执行 JS 或动态请求，当前 Web 服务端搜索暂不支持`,
+      ),
     }
   }
 
@@ -1487,18 +1829,18 @@ const searchSingleBookSource = async (source, searchKey) => {
   try {
     const request = buildSourceSearchRequest(source, searchKey)
     warnings.push(...request.warnings)
-    const { finalUrl, content } = await requestBytes(request.url, {
+    const { finalUrl, headers, content } = await requestBytes(request.url, {
       method: request.method,
-      headers: normalizeProxyHeaders(request.headers),
+      headers: normalizeProxyHeaders(request.headers, {
+        allowOriginReferer: true,
+      }),
       body: request.body,
       timeout: SOURCE_SEARCH_TIMEOUT_MS,
+      urlLabel: '搜索地址',
     })
-    const text = content.toString('utf8')
-    const books = isJsonPathUnionRule(listRule)
-      ? readJsonPathUnionValues(
-          JSON.parse(text.replace(/^\uFEFF/, '')),
-          listRule,
-        )
+    const text = decodeSourceText(content, headers, request.charset)
+    const books = shouldParseSearchResponseAsJson(listRule, text)
+      ? readJsonPathUnionValues(parseJsonSearchResponse(text), listRule)
           .map((item, index) =>
             buildJsonSourceSearchBook(source, item, finalUrl, index),
           )
@@ -1506,8 +1848,7 @@ const searchSingleBookSource = async (source, searchKey) => {
           .slice(0, SOURCE_SEARCH_RESULT_LIMIT)
       : (() => {
           const $ = cheerio.load(text)
-          return $(listRule)
-            .toArray()
+          return selectBookListNodes($, listRule)
             .map((node, index) =>
               buildSourceSearchBook($, source, node, finalUrl, index),
             )
@@ -1532,7 +1873,8 @@ const searchSingleBookSource = async (source, searchKey) => {
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
     const status =
-      isSelectorSyntaxError(error) || isAnonymousAccessRejected(error, source)
+      !isJsonResponseParseError(error) &&
+      (isSelectorSyntaxError(error) || isAnonymousAccessRejected(error, source))
         ? 'unsupported'
         : 'failed'
     return {
@@ -1545,7 +1887,9 @@ const searchSingleBookSource = async (source, searchKey) => {
             ? `目标站拒绝匿名搜索请求：${message}`
             : status === 'unsupported'
               ? `规则语法不支持：${message}`
-              : `搜索失败：${message}`,
+              : isJsonResponseParseError(error)
+                ? message
+                : `搜索失败：${message}`,
           warnings,
         ),
       ),
@@ -1595,7 +1939,7 @@ const searchBookSources = async keyword => {
 }
 
 const fetchSubscriptionJson = async rawUrl => {
-  const url = await validatePublicUrl(rawUrl)
+  const url = await validatePublicUrl(rawUrl, '订阅地址')
   const headers = {
     Accept: 'application/json, text/plain;q=0.9, */*;q=0.8',
     'User-Agent':
@@ -1610,6 +1954,7 @@ const fetchSubscriptionJson = async rawUrl => {
     headers,
     timeout: SUBSCRIPTION_TIMEOUT_MS,
     limit: MAX_SUBSCRIPTION_BYTES,
+    urlLabel: '订阅地址',
   })
   JSON.parse(content.toString('utf8').replace(/^\uFEFF/, ''))
   return content

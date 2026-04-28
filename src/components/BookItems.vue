@@ -5,7 +5,11 @@
         class="book"
         v-for="book in books"
         :key="getBookKey(book)"
+        role="button"
+        tabindex="0"
         @click="handleClick(book)"
+        @keydown.enter.prevent="handleClick(book)"
+        @keydown.space.prevent="handleClick(book)"
       >
         <div class="cover-img">
           <img
@@ -13,7 +17,7 @@
             :src="getCover(book)"
             :key="book.coverUrl"
             @error.once="proxyImage($event, book)"
-            alt=""
+            :alt="`${book.name} 封面`"
             loading="lazy"
           />
         </div>
@@ -125,6 +129,8 @@ const proxyImage = (evt: Event, book: BookItem) => {
 
 <style lang="scss" scoped>
 .books-wrapper {
+  flex: 1;
+  min-height: 0;
   overflow: auto;
 
   .wrapper {
@@ -179,12 +185,15 @@ const proxyImage = (evt: Event, book: BookItem) => {
           flex-direction: row;
           align-items: baseline;
           justify-content: flex-start;
+          max-width: 100%;
+          min-width: 0;
           font-size: 12px;
           font-weight: 600;
           color: #6b6b6b;
 
           .update-info {
             display: flex;
+            flex: 1 1 auto;
             min-width: 0;
             .dot {
               flex: 0 0 auto;
@@ -199,6 +208,10 @@ const proxyImage = (evt: Event, book: BookItem) => {
             overflow: hidden;
             text-overflow: ellipsis;
             white-space: nowrap;
+          }
+
+          .author {
+            flex: 0 1 45%;
           }
         }
 
@@ -252,6 +265,27 @@ const proxyImage = (evt: Event, book: BookItem) => {
         width: 100%;
         margin-bottom: 0;
         padding: 10px 20px;
+
+        .info {
+          margin-left: 16px;
+
+          .sub {
+            flex-wrap: wrap;
+            row-gap: 2px;
+
+            .author {
+              flex-basis: 100%;
+            }
+
+            .update-info {
+              width: 100%;
+
+              .dot {
+                display: none;
+              }
+            }
+          }
+        }
       }
     }
   }

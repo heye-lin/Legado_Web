@@ -29,8 +29,11 @@
       >清空全部</el-button
     >
   </div>
-  <div v-if="sourcesFiltered.length === 0" class="empty-source-list">
+  <div v-if="sources.length === 0" class="empty-source-list">
     暂无源。可使用“URL 订阅”导入订阅地址，或点击“导入 JSON”导入本地源文件。
+  </div>
+  <div v-else-if="sourcesFiltered.length === 0" class="empty-source-list">
+    没有匹配“{{ searchKey.trim() }}”的源，请调整关键词或清空筛选。
   </div>
   <el-checkbox-group id="source-list" v-model="sourceUrlSelect">
     <virtual-list
@@ -175,8 +178,14 @@ const outExport = () => {
 <style lang="scss" scoped>
 .tool {
   display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
   margin: 4px 0;
   justify-content: center;
+
+  :deep(.el-button + .el-button) {
+    margin-left: 0;
+  }
 }
 
 .empty-source-list {
