@@ -65,6 +65,14 @@
             </el-button>
             <el-button
               class="standalone-action-button"
+              type="success"
+              size="small"
+              @click="openSourceSearchDialog"
+            >
+              书籍搜索
+            </el-button>
+            <el-button
+              class="standalone-action-button"
               type="primary"
               size="small"
               @click="fileInput?.click()"
@@ -129,6 +137,23 @@
       @drop="handleShelfDrop"
     >
       <div
+        v-if="!sourceSearchActive && !isSearchingSources"
+        class="shelf-feature-bar"
+      >
+        <div class="shelf-feature-text">
+          <strong>书源与书籍搜索</strong>
+          <span>先导入/保存书源，再用书源搜索书籍。</span>
+        </div>
+        <div class="shelf-feature-actions">
+          <el-button type="warning" @click="openBookSourceManager">
+            书源管理
+          </el-button>
+          <el-button type="success" @click="openSourceSearchDialog">
+            书籍搜索
+          </el-button>
+        </div>
+      </div>
+      <div
         v-if="sourceSearchActive || isSearchingSources"
         class="source-search-summary"
       >
@@ -178,11 +203,23 @@
         <div class="empty-shelf-title">导入 TXT 开始阅读</div>
         <div class="empty-shelf-description">
           <p>选择本地 TXT 文件，或直接拖拽到书架区域导入。</p>
-          <p>搜索框可搜索本地书架；远程书源搜索由浏览器可访问书源支持。</p>
+          <p>也可以先进入书源管理导入书源，再用书源进行书籍搜索。</p>
         </div>
-        <el-button type="primary" size="large" @click="fileInput?.click()">
-          导入 TXT
-        </el-button>
+        <div class="empty-shelf-actions">
+          <el-button type="primary" size="large" @click="fileInput?.click()">
+            导入 TXT
+          </el-button>
+          <el-button type="warning" size="large" @click="openBookSourceManager">
+            书源管理
+          </el-button>
+          <el-button
+            type="success"
+            size="large"
+            @click="openSourceSearchDialog"
+          >
+            书籍搜索
+          </el-button>
+        </div>
       </div>
       <div v-else-if="isSearchingSources" class="source-search-empty">
         正在搜索「{{ sourceSearchKeyword }}」，可点击左侧按钮取消。
@@ -205,6 +242,34 @@
         <div class="drag-import-description">TXT 会保存在浏览器本地书架中</div>
       </div>
     </div>
+    <el-dialog
+      v-model="sourceSearchDialogVisible"
+      title="书籍搜索"
+      width="420px"
+    >
+      <div class="source-search-dialog">
+        <p>从已导入并启用的书源中搜索书籍。未导入书源时，请先进入书源管理。</p>
+        <el-input
+          v-model="sourceSearchInput"
+          placeholder="输入书名、作者或关键词"
+          :prefix-icon="SearchIcon"
+          @keyup.enter="confirmSourceSearchDialog"
+        />
+      </div>
+      <template #footer>
+        <el-button @click="sourceSearchDialogVisible = false">取消</el-button>
+        <el-button type="warning" @click="openBookSourceManager">
+          书源管理
+        </el-button>
+        <el-button
+          type="success"
+          :loading="isSearchingSources"
+          @click="confirmSourceSearchDialog"
+        >
+          搜索书籍
+        </el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -262,6 +327,8 @@ const sourceSearchReports = ref<SourceSearchReport[]>([])
 const sourceSearchActive = ref(false)
 const sourceSearchKeyword = ref('')
 const isSearchingSources = ref(false)
+const sourceSearchDialogVisible = ref(false)
+const sourceSearchInput = ref('')
 let sourceSearchRunId = 0
 let sourceSearchAbortController: AbortController | undefined
 const books = computed(() =>
@@ -346,7 +413,10 @@ const cancelSourceSearchRequest = () => {
 
 const searchBook = async () => {
   const keyword = searchWord.value.trim()
-  if (keyword === '') return
+  if (keyword === '') {
+    openSourceSearchDialog()
+    return
+  }
 
   sourceSearchAbortController?.abort()
   const currentRunId = ++sourceSearchRunId
@@ -387,6 +457,22 @@ const searchBook = async () => {
 
 const openBookSourceManager = () => {
   router.push({ path: '/bookSource' })
+}
+
+const openSourceSearchDialog = () => {
+  sourceSearchInput.value = searchWord.value.trim()
+  sourceSearchDialogVisible.value = true
+}
+
+const confirmSourceSearchDialog = () => {
+  const keyword = sourceSearchInput.value.trim()
+  if (keyword === '') {
+    ElMessage.info('请输入要搜索的书名、作者或关键词')
+    return
+  }
+  sourceSearchDialogVisible.value = false
+  searchWord.value = keyword
+  void nextTick(searchBook)
 }
 
 const clearSourceSearch = () => {
@@ -627,6 +713,14 @@ onMounted(() => {
     display: none;
   }
 
+  .source-search-dialog {
+    p {
+      margin: 0 0 14px;
+      color: #606266;
+      line-height: 1.7;
+    }
+  }
+
   .shelf-wrapper {
     position: relative;
     padding: 48px 48px;
@@ -638,6 +732,46 @@ onMounted(() => {
     transition:
       background-color 0.2s ease,
       outline-color 0.2s ease;
+
+    .shelf-feature-bar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      margin-bottom: 18px;
+      padding: 16px 18px;
+      box-sizing: border-box;
+      border: 1px solid #ebeef5;
+      border-radius: 12px;
+      color: #33373d;
+      background: rgba(255, 255, 255, 0.72);
+    }
+
+    .shelf-feature-text {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+
+      span {
+        color: #8a8f99;
+        font-size: 13px;
+      }
+    }
+
+    .shelf-feature-actions,
+    .empty-shelf-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+    }
+
+    .shelf-feature-actions {
+      justify-content: flex-end;
+    }
+
+    .empty-shelf-actions {
+      justify-content: center;
+    }
 
     .source-search-summary {
       margin-bottom: 18px;
@@ -815,6 +949,16 @@ onMounted(() => {
         padding: 32px 18px;
       }
 
+      .shelf-feature-bar {
+        flex-direction: column;
+        align-items: stretch;
+        margin: 16px;
+      }
+
+      .shelf-feature-actions {
+        justify-content: flex-start;
+      }
+
       .source-search-summary,
       .source-search-empty {
         margin: 16px;
@@ -869,6 +1013,16 @@ onMounted(() => {
       border-color: #3d434a;
       color: #d5d8dc;
       background: rgba(255, 255, 255, 0.04);
+    }
+
+    .shelf-feature-bar {
+      border-color: #3d434a;
+      color: #d5d8dc;
+      background: rgba(255, 255, 255, 0.04);
+    }
+
+    .shelf-feature-text span {
+      color: #9aa1aa;
     }
 
     .source-search-empty {
