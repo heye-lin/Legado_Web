@@ -12,11 +12,14 @@ import '@/assets/sourceeditor.css'
 import { useDark } from '@vueuse/core'
 import type { SourceConfig } from '@/config/sourceConfig'
 import { isBookSourceKind, sourceKindFromPath } from '@/utils/sourceKind'
+import API from '@api'
+import { getErrorMessage } from '@/utils/jsonFile'
 
 useDark()
 
 const store = useSourceStore()
 const route = useRoute()
+let loadRunId = 0
 
 const currentSourceKind = computed(() => sourceKindFromPath(route.fullPath))
 const config = computed(
@@ -29,8 +32,23 @@ const config = computed(
 watch(
   currentSourceKind,
   kind => {
+    const currentRunId = ++loadRunId
     store.syncCurrentSourceKind(kind)
     document.title = isBookSourceKind(kind) ? '书源管理' : '订阅源管理'
+    API.getSources(kind)
+      .then(({ data }) => {
+        if (currentRunId !== loadRunId) return
+        if (data.isSuccess) {
+          store.saveSources(data.data, kind)
+        } else {
+          ElMessage.error(data.errorMsg)
+        }
+      })
+      .catch(error => {
+        if (currentRunId === loadRunId) {
+          ElMessage.error(`加载源失败：${getErrorMessage(error)}`)
+        }
+      })
   },
   { immediate: true },
 )

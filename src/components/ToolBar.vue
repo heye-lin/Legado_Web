@@ -268,7 +268,7 @@ const buttons = ref<ToolButton[]>(
     { name: '⇩导入源', hotKeys: [], action: importSources },
   ),
 )
-const hotkeysDialogVisible = ref(true)
+const hotkeysDialogVisible = ref(false)
 
 const recordKeyDowning = ref(false)
 
@@ -381,12 +381,7 @@ function readHotkeysConfig() {
   return false
 }
 
-onMounted(() => {
-  /** 读取热键配置 */
-  if (readHotkeysConfig()) {
-    hotkeysDialogVisible.value = false
-  }
-})
+onMounted(readHotkeysConfig)
 
 onUnmounted(() => {
   unbindRecorderHotkeys()

@@ -3,6 +3,9 @@ import type {
   Book,
   BookChapter,
   BookProgress,
+  SourceSearchBook,
+  SourceSearchReport,
+  SourceSearchResult,
 } from '@/book'
 import type { BookSource, RssSource, Source } from '@/source'
 import type { webReadConfig } from '@/web'
@@ -632,6 +635,560 @@ const readSources = (kind: SourceKind = getCurrentSourceKind()) => {
 const writeSources = (sources: Source[], kind: SourceKind) =>
   writeJson(sourceStorageKey(kind), sources)
 
+const getErrorMessage = (error: unknown) =>
+  error instanceof Error ? error.message : String(error)
+
+type SourceSearchOptions = {
+  signal?: AbortSignal
+}
+
+type SourceSearchItemResult = {
+  books: SourceSearchBook[]
+  report: SourceSearchReport
+}
+
+type SourceHeaderParseResult = {
+  headers: Headers
+  warnings: string[]
+}
+
+type SourceSearchRequest = {
+  url: string
+  init: RequestInit
+  warnings: string[]
+}
+
+const SOURCE_SEARCH_CONCURRENCY = 4
+const SOURCE_SEARCH_TIMEOUT_MS = 12000
+const SOURCE_SEARCH_RESULT_LIMIT = 50
+const SEARCH_KEY_TOKENS = ['{{key}}', '{{keyword}}', '{{searchKey}}']
+const FORBIDDEN_SOURCE_HEADER_NAMES = new Set([
+  'accept-encoding',
+  'connection',
+  'content-length',
+  'cookie',
+  'cookie2',
+  'host',
+  'origin',
+  'referer',
+  'user-agent',
+])
+const FORBIDDEN_SOURCE_HEADER_PREFIXES = ['proxy-', 'sec-']
+const COMPLEX_LEGADO_RULE_PATTERN =
+  /(^\s*(js:|@js:|xpath:|json:|regex:)|@js\b|<js>|&&|\|\||##)/i
+
+const unique = <T>(values: T[]) => Array.from(new Set(values))
+
+const isForbiddenSourceHeader = (name: string) => {
+  const lowerName = name.toLocaleLowerCase()
+  return (
+    FORBIDDEN_SOURCE_HEADER_NAMES.has(lowerName) ||
+    FORBIDDEN_SOURCE_HEADER_PREFIXES.some(prefix =>
+      lowerName.startsWith(prefix),
+    )
+  )
+}
+
+const sourceSearchReport = (
+  source: BookSource,
+  status: SourceSearchReport['status'],
+  message: string,
+  count = 0,
+): SourceSearchReport => ({
+  sourceName: source.bookSourceName,
+  sourceUrl: source.bookSourceUrl,
+  status,
+  count,
+  message,
+})
+
+const parseSourceHeaders = (
+  rawHeader: string | undefined,
+): SourceHeaderParseResult => {
+  const headers = new Headers()
+  const warnings: string[] = []
+  const trimmed = rawHeader?.trim()
+  if (!trimmed) return { headers, warnings }
+
+  const appendHeader = (key: string, value: string) => {
+    if (isForbiddenSourceHeader(key)) {
+      warnings.push(`已忽略浏览器禁止设置的请求头 ${key}`)
+      return
+    }
+    try {
+      headers.set(key, value)
+    } catch {
+      warnings.push(`已忽略无效请求头 ${key}`)
+    }
+  }
+
+  try {
+    const parsed = JSON.parse(trimmed) as unknown
+    if (typeof parsed === 'object' && parsed !== null) {
+      Object.entries(parsed).forEach(([key, value]) => {
+        if (typeof value === 'string') appendHeader(key, value)
+      })
+      return { headers, warnings: unique(warnings) }
+    }
+  } catch {
+    // Continue with the common line-based header syntax used by many sources.
+  }
+
+  trimmed.split(/\r?\n/).forEach(line => {
+    const separatorIndex = line.search(/[:=]/)
+    if (separatorIndex <= 0) return
+    const key = line.slice(0, separatorIndex).trim()
+    const value = line.slice(separatorIndex + 1).trim()
+    if (key && value) appendHeader(key, value)
+  })
+  return { headers, warnings: unique(warnings) }
+}
+
+const fillSearchKey = (template: string, searchKey: string) => {
+  const encodedKey = encodeURIComponent(searchKey)
+  return SEARCH_KEY_TOKENS.reduce(
+    (text, token) => text.split(token).join(encodedKey),
+    template,
+  )
+}
+
+const splitSearchUrl = (searchUrl: string) => {
+  const bodySeparatorIndex = searchUrl.indexOf('@')
+  if (bodySeparatorIndex === -1) {
+    return { url: searchUrl, body: undefined }
+  }
+  return {
+    url: searchUrl.slice(0, bodySeparatorIndex),
+    body: searchUrl.slice(bodySeparatorIndex + 1),
+  }
+}
+
+const buildSearchRequest = (
+  source: BookSource,
+  searchKey: string,
+): SourceSearchRequest => {
+  const searchUrl = source.searchUrl?.trim()
+  if (!searchUrl) throw new Error('未配置搜索地址')
+
+  const { url, body } = splitSearchUrl(searchUrl)
+  const requestUrl = new URL(
+    fillSearchKey(url, searchKey),
+    source.bookSourceUrl,
+  ).toString()
+  const { headers, warnings } = parseSourceHeaders(source.header)
+
+  if (body === undefined) {
+    return {
+      url: requestUrl,
+      init: { headers } satisfies RequestInit,
+      warnings,
+    }
+  }
+
+  if (!headers.has('content-type')) {
+    headers.set(
+      'content-type',
+      'application/x-www-form-urlencoded;charset=UTF-8',
+    )
+  }
+  return {
+    url: requestUrl,
+    init: {
+      method: 'POST',
+      headers,
+      body: fillSearchKey(body, searchKey),
+    } satisfies RequestInit,
+    warnings,
+  }
+}
+
+const fetchTextWithTimeout = async (
+  url: string,
+  init: RequestInit,
+  signal?: AbortSignal,
+) => {
+  const controller = new AbortController()
+  const abort = () => controller.abort()
+  if (signal?.aborted) abort()
+  else signal?.addEventListener('abort', abort, { once: true })
+  const timeoutId = window.setTimeout(
+    () => controller.abort(),
+    SOURCE_SEARCH_TIMEOUT_MS,
+  )
+  try {
+    const response = await fetch(url, { ...init, signal: controller.signal })
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`)
+    }
+    return {
+      html: await response.text(),
+      responseUrl: response.url || url,
+    }
+  } finally {
+    window.clearTimeout(timeoutId)
+    signal?.removeEventListener('abort', abort)
+  }
+}
+
+type ParsedRule = {
+  selector: string
+  attribute: string
+}
+
+const parseCssRule = (rule: string | undefined): ParsedRule | undefined => {
+  const trimmed = rule?.trim()
+  if (!trimmed) return undefined
+
+  const attrIndex = trimmed.lastIndexOf('@')
+  if (attrIndex === -1) return { selector: trimmed, attribute: 'text' }
+  return {
+    selector: trimmed.slice(0, attrIndex).trim(),
+    attribute: trimmed.slice(attrIndex + 1).trim() || 'text',
+  }
+}
+
+const selectRuleTarget = (scope: Element, selector: string) =>
+  selector === '' ? scope : scope.querySelector(selector)
+
+const isHttpUrl = (url: string) => {
+  try {
+    const parsed = new URL(url)
+    return parsed.protocol === 'http:' || parsed.protocol === 'https:'
+  } catch {
+    return false
+  }
+}
+
+const resolveHttpUrl = (value: string, baseUrl: string) => {
+  const trimmed = value.trim()
+  if (!trimmed) return ''
+  try {
+    const url = new URL(trimmed, baseUrl)
+    return url.protocol === 'http:' || url.protocol === 'https:'
+      ? url.toString()
+      : ''
+  } catch {
+    return ''
+  }
+}
+
+const resolveImageUrl = (value: string, baseUrl: string) => {
+  const trimmed = value.trim()
+  if (!trimmed) return ''
+  try {
+    const url = new URL(trimmed, baseUrl)
+    if (url.protocol === 'http:' || url.protocol === 'https:') {
+      return url.toString()
+    }
+    if (url.protocol === 'blob:') return url.toString()
+    if (url.protocol === 'data:' && url.toString().startsWith('data:image/')) {
+      return url.toString()
+    }
+    return ''
+  } catch {
+    return ''
+  }
+}
+
+const readRuleValue = (
+  scope: Element,
+  rule: string | undefined,
+  baseUrl: string,
+) => {
+  const parsedRule = parseCssRule(rule)
+  if (parsedRule === undefined) return ''
+
+  const target = selectRuleTarget(scope, parsedRule.selector)
+  if (target === null) return ''
+
+  const attribute = parsedRule.attribute.toLocaleLowerCase()
+  if (attribute === 'text') return target.textContent?.trim() ?? ''
+  if (attribute === 'html') return target.innerHTML.trim()
+
+  const attrValue = target.getAttribute(parsedRule.attribute)?.trim() ?? ''
+  if (!attrValue) return ''
+  if (attribute === 'href' || attribute === 'src') {
+    return new URL(attrValue, baseUrl).toString()
+  }
+  return attrValue
+}
+
+const isComplexLegadoRule = (rule: string | undefined) =>
+  COMPLEX_LEGADO_RULE_PATTERN.test(rule ?? '')
+
+const buildSourceSearchBook = (
+  source: BookSource,
+  node: Element,
+  baseUrl: string,
+  index: number,
+): SourceSearchBook | undefined => {
+  const rule = source.ruleSearch ?? {}
+  const name = readRuleValue(node, rule.name, baseUrl)
+  if (!name) return undefined
+
+  const bookUrl = resolveHttpUrl(
+    readRuleValue(node, rule.bookUrl, baseUrl),
+    baseUrl,
+  )
+  if (!bookUrl) return undefined
+
+  const coverUrl = resolveImageUrl(
+    readRuleValue(node, rule.coverUrl, baseUrl),
+    baseUrl,
+  )
+  const now = Date.now()
+  return {
+    entryType: 'source-search',
+    name,
+    author: readRuleValue(node, rule.author, baseUrl),
+    bookUrl,
+    kind: readRuleValue(node, rule.kind, baseUrl) || undefined,
+    wordCount: readRuleValue(node, rule.wordCount, baseUrl) || undefined,
+    sourceName: source.bookSourceName,
+    sourceUrl: source.bookSourceUrl,
+    origin: source.bookSourceUrl,
+    originName: source.bookSourceName,
+    type: source.bookSourceType,
+    coverUrl: coverUrl || undefined,
+    intro: readRuleValue(node, rule.intro, baseUrl) || undefined,
+    latestChapterTitle:
+      readRuleValue(node, rule.lastChapter, baseUrl) || undefined,
+    tocUrl: bookUrl,
+    resultKey: `${source.bookSourceUrl}\u0000${bookUrl}`,
+    resultIndex: index,
+    originOrder: source.customOrder,
+    weight: source.weight,
+    searchedAt: now,
+    time: now,
+  }
+}
+
+const appendWarnings = (message: string, warnings: string[]) => {
+  const text = unique(warnings).join('；')
+  return text ? `${message}；${text}` : message
+}
+
+const searchSingleBookSource = async (
+  source: BookSource,
+  searchKey: string,
+  options: SourceSearchOptions = {},
+): Promise<SourceSearchItemResult> => {
+  if (options.signal?.aborted) {
+    return {
+      books: [],
+      report: sourceSearchReport(source, 'failed', '搜索已取消'),
+    }
+  }
+
+  if (source.bookSourceUrl === 'https://example.com') {
+    return {
+      books: [],
+      report: sourceSearchReport(
+        source,
+        'skipped',
+        '示例书源不会参与搜索，请在书源管理中导入真实书源。',
+      ),
+    }
+  }
+
+  if (!source.enabled) {
+    return {
+      books: [],
+      report: sourceSearchReport(source, 'skipped', '书源未启用'),
+    }
+  }
+
+  if (!isHttpUrl(source.bookSourceUrl)) {
+    return {
+      books: [],
+      report: sourceSearchReport(
+        source,
+        'unsupported',
+        '书源域名必须是 http/https URL',
+      ),
+    }
+  }
+
+  const unsupportedFeatures: string[] = []
+  if (source.enabledCookieJar) unsupportedFeatures.push('CookieJar')
+  if (source.jsLib) unsupportedFeatures.push('jsLib')
+  if (source.loginUi || source.loginCheckJs)
+    unsupportedFeatures.push('登录脚本')
+  if (unsupportedFeatures.length > 0) {
+    return {
+      books: [],
+      report: sourceSearchReport(
+        source,
+        'unsupported',
+        `该书源依赖 ${unsupportedFeatures.join('、')}，纯浏览器搜索暂不支持`,
+      ),
+    }
+  }
+
+  if (!source.searchUrl?.trim()) {
+    return {
+      books: [],
+      report: sourceSearchReport(source, 'skipped', '未配置搜索地址'),
+    }
+  }
+
+  const ruleSearch = source.ruleSearch ?? {}
+  const listRule = ruleSearch.bookList?.trim()
+  if (!listRule) {
+    return {
+      books: [],
+      report: sourceSearchReport(source, 'skipped', '未配置搜索列表规则'),
+    }
+  }
+
+  if (!ruleSearch.name?.trim()) {
+    return {
+      books: [],
+      report: sourceSearchReport(source, 'skipped', '未配置书名规则'),
+    }
+  }
+
+  if (!ruleSearch.bookUrl?.trim()) {
+    return {
+      books: [],
+      report: sourceSearchReport(source, 'skipped', '未配置详情地址规则'),
+    }
+  }
+
+  const complexRule = [
+    listRule,
+    ruleSearch.name,
+    ruleSearch.author,
+    ruleSearch.kind,
+    ruleSearch.wordCount,
+    ruleSearch.lastChapter,
+    ruleSearch.intro,
+    ruleSearch.coverUrl,
+    ruleSearch.bookUrl,
+  ].find(isComplexLegadoRule)
+  if (complexRule !== undefined) {
+    return {
+      books: [],
+      report: sourceSearchReport(
+        source,
+        'unsupported',
+        `规则「${complexRule}」超出当前纯 Web querySelector 支持范围`,
+      ),
+    }
+  }
+
+  try {
+    const warnings: string[] = []
+    if (source.loginUrl) {
+      warnings.push('该书源配置了登录地址，纯 Web 仅尝试匿名搜索')
+    }
+    if (source.coverDecodeJs) {
+      warnings.push('封面解密 JS 暂不执行')
+    }
+    const request = buildSearchRequest(source, searchKey)
+    warnings.push(...request.warnings)
+    const { html, responseUrl } = await fetchTextWithTimeout(
+      request.url,
+      request.init,
+      options.signal,
+    )
+    const document = new DOMParser().parseFromString(html, 'text/html')
+    const nodes = Array.from(document.querySelectorAll(listRule))
+    const books = nodes
+      .map((node, index) =>
+        buildSourceSearchBook(source, node, responseUrl, index),
+      )
+      .filter((book): book is SourceSearchBook => book !== undefined)
+      .slice(0, SOURCE_SEARCH_RESULT_LIMIT)
+
+    return {
+      books,
+      report: sourceSearchReport(
+        source,
+        books.length > 0 ? 'success' : 'empty',
+        appendWarnings(
+          books.length > 0
+            ? `找到 ${books.length} 条结果，最多显示前 ${SOURCE_SEARCH_RESULT_LIMIT} 条`
+            : '请求成功，但搜索规则没有解析出书籍',
+          warnings,
+        ),
+        books.length,
+      ),
+    }
+  } catch (error) {
+    const message = getErrorMessage(error)
+    const isSelectorError =
+      error instanceof DOMException && error.name === 'SyntaxError'
+    const status: SourceSearchReport['status'] = isSelectorError
+      ? 'unsupported'
+      : 'failed'
+    return {
+      books: [],
+      report: sourceSearchReport(
+        source,
+        status,
+        isSelectorError ? `规则语法不支持：${message}` : `搜索失败：${message}`,
+      ),
+    }
+  }
+}
+
+const mapWithConcurrency = async <T, R>(
+  items: T[],
+  concurrency: number,
+  mapper: (item: T, index: number) => Promise<R>,
+  shouldStop: () => boolean = () => false,
+) => {
+  const results = new Array<R | undefined>(items.length)
+  let nextIndex = 0
+  const workerCount = Math.min(concurrency, items.length)
+  await Promise.all(
+    Array.from({ length: workerCount }, async () => {
+      while (!shouldStop() && nextIndex < items.length) {
+        const index = nextIndex
+        nextIndex += 1
+        results[index] = await mapper(items[index], index)
+      }
+    }),
+  )
+  return results.filter((result): result is R => result !== undefined)
+}
+
+const compareBookSources = (left: BookSource, right: BookSource) =>
+  left.customOrder - right.customOrder ||
+  right.weight - left.weight ||
+  left.bookSourceName.localeCompare(right.bookSourceName)
+
+const searchBookSources = async (
+  searchKey: string,
+  options: SourceSearchOptions = {},
+): ApiResult<SourceSearchResult> => {
+  const key = searchKey.trim()
+  if (!key) return ok({ books: [], reports: [] })
+
+  const sources = (readSources('bookSource') as BookSource[]).sort(
+    compareBookSources,
+  )
+  const results = await mapWithConcurrency(
+    sources,
+    SOURCE_SEARCH_CONCURRENCY,
+    source => searchSingleBookSource(source, key, options),
+    () => options.signal?.aborted === true,
+  )
+  const bookMap = new Map<string, SourceSearchBook>()
+  const reports: SourceSearchReport[] = []
+
+  results.forEach(result => {
+    reports.push(result.report)
+    result.books.forEach(book => bookMap.set(book.resultKey, book))
+  })
+
+  return ok({
+    books: Array.from(bookMap.values()),
+    reports,
+  })
+}
+
 const normalizeText = (text: string) =>
   text
     .replace(/^\uFEFF/, '')
@@ -1049,6 +1606,7 @@ export default {
   getBookShelf,
   getChapterList,
   getBookContent,
+  searchBookSources,
   deleteBook,
   importLocalTextBook,
   exportStandaloneData,

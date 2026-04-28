@@ -29,8 +29,12 @@
       >清空</el-button
     >
   </div>
+  <div v-if="sourcesFiltered.length === 0" class="empty-source-list">
+    暂无源。可点击左侧「⇩导入源」导入 JSON，或填写表单后点击「✓保存源」。
+  </div>
   <el-checkbox-group id="source-list" v-model="sourceUrlSelect">
     <virtual-list
+      v-if="sourcesFiltered.length > 0"
       style="height: 100%; overflow-y: auto; overflow-x: hidden"
       :data-key="(source: Source) => getSourceUniqueKey(source)"
       :data-sources="sourcesFiltered"
@@ -147,6 +151,16 @@ const outExport = () => {
   display: flex;
   margin: 4px 0;
   justify-content: center;
+}
+
+.empty-source-list {
+  margin-top: 24px;
+  padding: 16px;
+  border: 1px dashed var(--el-border-color);
+  border-radius: 8px;
+  color: var(--el-text-color-secondary);
+  line-height: 1.6;
+  text-align: center;
 }
 
 #source-list {

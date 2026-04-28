@@ -63,6 +63,39 @@ export type Book = BaseBook & {
   //同步时间
   syncTime: number
 }
+
+export type SourceSearchBook = BaseBook & {
+  entryType: 'source-search'
+  sourceName: string
+  sourceUrl: string
+  origin: string
+  originName: string
+  type: number
+  coverUrl?: string
+  intro?: string
+  latestChapterTitle?: string
+  tocUrl: string
+  resultKey: string
+  resultIndex: number
+  originOrder: number
+  weight: number
+  searchedAt: number
+  time: number
+}
+
+export type SourceSearchReport = {
+  sourceName: string
+  sourceUrl: string
+  status: 'success' | 'empty' | 'skipped' | 'unsupported' | 'failed'
+  count: number
+  message: string
+}
+
+export type SourceSearchResult = {
+  books: SourceSearchBook[]
+  reports: SourceSearchReport[]
+}
+
 export type BookProgress = Pick<
   Book,
   | 'name'

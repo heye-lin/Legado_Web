@@ -11,8 +11,15 @@
           v-model="searchWord"
           class="search-input"
           :prefix-icon="SearchIcon"
-          @keyup.enter="searchBook"
         >
+          <template #append>
+            <el-button
+              :type="isSearchingSources ? 'danger' : 'primary'"
+              @click="isSearchingSources ? clearSourceSearch() : searchBook()"
+            >
+              {{ isSearchingSources ? '取消' : '用书源搜书' }}
+            </el-button>
+          </template>
         </el-input>
       </div>
       <div class="bottom-wrapper">
@@ -50,6 +57,14 @@
             </el-tag>
             <el-button
               class="standalone-action-button"
+              type="warning"
+              size="small"
+              @click="openBookSourceManager"
+            >
+              书源管理
+            </el-button>
+            <el-button
+              class="standalone-action-button"
               type="primary"
               size="small"
               @click="fileInput?.click()"
@@ -82,10 +97,7 @@
         </div>
       </div>
       <div class="bottom-icons">
-        <a
-          href="https://github.com/heye-lin/Legado_Web"
-          target="_blank"
-        >
+        <a href="https://github.com/heye-lin/Legado_Web" target="_blank">
           <div class="bottom-icon">
             <img :src="githubUrl" alt="" />
           </div>
@@ -116,14 +128,71 @@
       @dragleave="handleShelfDragLeave"
       @drop="handleShelfDrop"
     >
+      <div
+        v-if="sourceSearchActive || isSearchingSources"
+        class="source-search-summary"
+      >
+        <div>
+          <strong>
+            {{
+              isSearchingSources
+                ? '正在使用书源搜索'
+                : `书源搜索结果：${sourceSearchBooks.length} 本`
+            }}
+          </strong>
+          <span class="source-search-keyword"
+            >「{{ sourceSearchKeyword }}」</span
+          >
+        </div>
+        <div class="source-search-actions">
+          <el-button size="small" @click="clearSourceSearch">
+            返回本地书架
+          </el-button>
+          <el-button size="small" type="warning" @click="openBookSourceManager">
+            管理书源
+          </el-button>
+        </div>
+        <div v-if="sourceSearchReports.length > 0" class="source-search-report">
+          {{ sourceSearchReportText }}
+        </div>
+        <div
+          v-if="sourceSearchReportDetails.length > 0"
+          class="source-search-report-details"
+        >
+          <div
+            v-for="report in sourceSearchReportDetails"
+            :key="`${report.sourceUrl}:${report.status}`"
+            class="source-search-report-detail"
+          >
+            {{ sourceSearchReportStatusText(report.status) }} ·
+            {{ report.sourceName }}：{{ report.message }}
+          </div>
+        </div>
+        <div class="source-search-tip">
+          点击结果会在新标签页打开来源站详情；当前不能加入书架或在线阅读。 纯
+          Web 搜索仅支持目标站允许 CORS 且浏览器 querySelector 可识别的 CSS
+          规则。
+        </div>
+      </div>
       <div v-if="showStandaloneEmptyState" class="empty-shelf-state">
         <div class="empty-shelf-title">导入 TXT 开始阅读</div>
         <div class="empty-shelf-description">
-          选择本地 TXT 文件，或直接拖拽到书架区域导入。
+          <p>选择本地 TXT 文件，或直接拖拽到书架区域导入。</p>
+          <p>搜索框可搜索本地书架；远程书源搜索由浏览器可访问书源支持。</p>
         </div>
         <el-button type="primary" size="large" @click="fileInput?.click()">
           导入 TXT
         </el-button>
+      </div>
+      <div v-else-if="isSearchingSources" class="source-search-empty">
+        正在搜索「{{ sourceSearchKeyword }}」，可点击左侧按钮取消。
+      </div>
+      <div
+        v-else-if="sourceSearchActive && books.length === 0"
+        class="source-search-empty"
+      >
+        没有可显示的书源搜索结果。请查看上方报告，或到书源管理导入允许 CORS
+        且使用浏览器 querySelector 可识别 CSS 规则的书源。
       </div>
       <book-items
         v-else
@@ -148,7 +217,7 @@ import { useLoading } from '@/hooks/loading'
 import { useStandaloneBookImport } from '@/hooks/useStandaloneBookImport'
 import { Search as SearchIcon } from '@element-plus/icons-vue'
 import API from '@api'
-import type { Book } from '@/book'
+import type { Book, SourceSearchBook, SourceSearchReport } from '@/book'
 import {
   type ReadingRecentBook,
   clearReadingSession,
@@ -166,6 +235,7 @@ import {
 const store = useBookStore()
 const isNight = computed(() => store.isNight)
 const shelf = computed(() => store.shelf)
+const router = useRouter()
 
 const readingRecent = ref<ReadingRecentBook>(createDefaultReadingRecent())
 const resetReadingRecent = () => {
@@ -186,19 +256,142 @@ const { loadingWrapper, isLoading } = useLoading(
 
 // 书架书籍和本地搜索
 const searchWord = ref('')
-const searchPlaceholder = '搜索本地书架，点击“导入 TXT”添加书籍'
+const searchPlaceholder = '输入书名筛选本地；点击右侧按钮用书源搜书'
+const sourceSearchBooks = shallowRef<SourceSearchBook[]>([])
+const sourceSearchReports = ref<SourceSearchReport[]>([])
+const sourceSearchActive = ref(false)
+const sourceSearchKeyword = ref('')
+const isSearchingSources = ref(false)
+let sourceSearchRunId = 0
+let sourceSearchAbortController: AbortController | undefined
 const books = computed(() =>
-  searchWord.value === ''
-    ? shelf.value
-    : filterShelfBooks(shelf.value, searchWord.value),
+  sourceSearchActive.value
+    ? sourceSearchBooks.value
+    : searchWord.value === ''
+      ? shelf.value
+      : filterShelfBooks(shelf.value, searchWord.value),
 )
 const showStandaloneEmptyState = computed(
-  () => !isLoading.value && shelf.value.length === 0,
+  () =>
+    !sourceSearchActive.value && !isLoading.value && shelf.value.length === 0,
+)
+const sourceSearchReportText = computed(() => {
+  const reports = sourceSearchReports.value
+  const resultCount = reports.filter(
+    report => report.status === 'success',
+  ).length
+  const emptyCount = reports.filter(report => report.status === 'empty').length
+  const failedCount = reports.filter(
+    report => report.status === 'failed',
+  ).length
+  const skippedCount = reports.filter(
+    report => report.status === 'skipped',
+  ).length
+  const unsupportedCount = reports.filter(
+    report => report.status === 'unsupported',
+  ).length
+  return `有结果 ${resultCount} 个，无结果 ${emptyCount} 个，失败 ${failedCount} 个，不支持 ${unsupportedCount} 个，跳过 ${skippedCount} 个`
+})
+const sourceSearchReportDetails = computed(() =>
+  sourceSearchReports.value
+    .filter(report => report.status !== 'success' || report.count === 0)
+    .slice(0, 8),
 )
 
-const searchBook = () => {
-  if (searchWord.value === '') return
-  if (books.value.length === 0) ElMessage.info('本地书架中没有匹配书籍')
+const sourceSearchReportStatusText = (status: SourceSearchReport['status']) => {
+  const statusText: Record<SourceSearchReport['status'], string> = {
+    success: '成功',
+    empty: '无结果',
+    skipped: '跳过',
+    unsupported: '不支持',
+    failed: '失败',
+  }
+  return statusText[status]
+}
+
+const getSourceSearchEmptyMessage = (reports: SourceSearchReport[]) => {
+  if (reports.length === 0) return '当前没有可用书源，请先到书源管理导入书源。'
+  const exampleReport = reports.find(report =>
+    report.message.includes('示例书源'),
+  )
+  if (exampleReport !== undefined) return exampleReport.message
+  if (reports.every(report => report.status === 'empty')) {
+    return '书源请求成功，但没有解析出可显示结果。请检查关键词或搜索规则。'
+  }
+  if (reports.every(report => report.status === 'skipped')) {
+    return '没有可搜索书源，请启用书源并配置搜索地址、搜索列表、书名和详情地址规则。'
+  }
+  if (reports.every(report => report.status === 'unsupported')) {
+    return '导入的书源超出当前纯 Web querySelector 搜索范围。'
+  }
+  if (reports.every(report => report.status === 'failed')) {
+    return '所有书源搜索失败，常见原因是目标站未允许 CORS、网络失败或规则不兼容。'
+  }
+  return '书源没有返回可显示的搜索结果，请检查书源规则、CORS 或更换书源。'
+}
+
+const resetSourceSearchState = () => {
+  sourceSearchActive.value = false
+  sourceSearchBooks.value = []
+  sourceSearchReports.value = []
+  sourceSearchKeyword.value = ''
+}
+
+const cancelSourceSearchRequest = () => {
+  sourceSearchRunId += 1
+  sourceSearchAbortController?.abort()
+  sourceSearchAbortController = undefined
+  isSearchingSources.value = false
+}
+
+const searchBook = async () => {
+  const keyword = searchWord.value.trim()
+  if (keyword === '') return
+
+  sourceSearchAbortController?.abort()
+  const currentRunId = ++sourceSearchRunId
+  const controller = new AbortController()
+  sourceSearchAbortController = controller
+  resetSourceSearchState()
+  sourceSearchKeyword.value = keyword
+  sourceSearchActive.value = true
+  isSearchingSources.value = true
+  try {
+    const result = await API.searchBookSources(keyword, {
+      signal: controller.signal,
+    })
+    if (currentRunId !== sourceSearchRunId || controller.signal.aborted) return
+    if (!result.data.isSuccess) {
+      ElMessage.error(result.data.errorMsg)
+      return
+    }
+    sourceSearchBooks.value = result.data.data.books
+    sourceSearchReports.value = result.data.data.reports
+    sourceSearchKeyword.value = keyword
+    sourceSearchActive.value = true
+    if (sourceSearchBooks.value.length === 0) {
+      ElMessage.warning(getSourceSearchEmptyMessage(sourceSearchReports.value))
+    }
+  } catch (error) {
+    if (currentRunId !== sourceSearchRunId || controller.signal.aborted) return
+    ElMessage.error(`书源搜索失败：${getErrorMessage(error)}`)
+  } finally {
+    if (currentRunId === sourceSearchRunId) {
+      isSearchingSources.value = false
+      if (sourceSearchAbortController === controller) {
+        sourceSearchAbortController = undefined
+      }
+    }
+  }
+}
+
+const openBookSourceManager = () => {
+  router.push({ path: '/bookSource' })
+}
+
+const clearSourceSearch = () => {
+  cancelSourceSearchRequest()
+  resetSourceSearchState()
 }
 
 const {
@@ -220,7 +413,6 @@ const {
   resetReadingRecent,
 })
 
-const router = useRouter()
 const handleBookDelete = async (book: Book) => {
   try {
     await ElMessageBox.confirm(
@@ -252,10 +444,36 @@ const handleBookDelete = async (book: Book) => {
   }
 }
 
-const handleBookClick = (book: Book) => {
+const isSourceSearchBook = (
+  book: Book | SourceSearchBook,
+): book is SourceSearchBook =>
+  'entryType' in book && book.entryType === 'source-search'
+
+const handleBookClick = (book: Book | SourceSearchBook) => {
+  if (isSourceSearchBook(book)) {
+    const url = new URL(book.bookUrl)
+    if (url.protocol !== 'http:' && url.protocol !== 'https:') {
+      ElMessage.warning('书源搜索结果只能打开 http/https 链接')
+      return
+    }
+    const opened = window.open(book.bookUrl, '_blank', 'noopener,noreferrer')
+    if (opened === null) ElMessage.warning('浏览器阻止了外部详情页弹窗')
+    return
+  }
   const { chapterIndex, chapterPos } = getBookReadPosition(book)
   toDetail(book.bookUrl, book.name, book.author, chapterIndex, chapterPos)
 }
+
+watch(searchWord, value => {
+  if (value.trim() === '') {
+    clearSourceSearch()
+    return
+  }
+  if (sourceSearchActive.value || isSearchingSources.value) {
+    cancelSourceSearchRequest()
+    resetSourceSearchState()
+  }
+})
 
 const toDetail = (
   bookUrl: string,
@@ -363,12 +581,7 @@ onMounted(() => {
 
         .recent-book {
           font-size: 10px;
-          /*           // font-weight: 400;
-          // margin: 12px 0;
-          // font-weight: 500;
-          // color: #6B7C87; */
           cursor: pointer;
-          /*           // padding: 6px 18px; */
         }
       }
     }
@@ -389,7 +602,6 @@ onMounted(() => {
       .setting-connect {
         font-size: 8px;
         margin-top: 16px;
-        /*         // color: #6B7C87; */
         cursor: pointer;
       }
 
@@ -427,6 +639,60 @@ onMounted(() => {
       background-color 0.2s ease,
       outline-color 0.2s ease;
 
+    .source-search-summary {
+      margin-bottom: 18px;
+      padding: 14px 18px;
+      border: 1px solid #ebeef5;
+      border-radius: 12px;
+      color: #33373d;
+      background: rgba(255, 255, 255, 0.72);
+    }
+
+    .source-search-keyword {
+      margin-left: 6px;
+      color: #909399;
+    }
+
+    .source-search-actions {
+      margin-top: 10px;
+    }
+
+    .source-search-report,
+    .source-search-report-details,
+    .source-search-tip {
+      margin-top: 8px;
+      color: #8a8f99;
+      font-size: 13px;
+      line-height: 1.6;
+    }
+
+    .source-search-report-details {
+      max-height: 120px;
+      overflow: auto;
+    }
+
+    .source-search-report-detail {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .source-search-empty {
+      flex: 1;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 260px;
+      padding: 24px;
+      box-sizing: border-box;
+      border: 1px dashed #dcdfe6;
+      border-radius: 18px;
+      color: #8a8f99;
+      text-align: center;
+      line-height: 1.8;
+      background: rgba(255, 255, 255, 0.42);
+    }
+
     &.drag-over {
       background-color: rgba(64, 158, 255, 0.08);
       outline: 2px dashed rgba(64, 158, 255, 0.45);
@@ -460,6 +726,14 @@ onMounted(() => {
       font-size: 14px;
       line-height: 1.7;
       margin-bottom: 24px;
+
+      p {
+        margin: 0;
+      }
+
+      p + p {
+        margin-top: 4px;
+      }
     }
 
     .drag-import-mask {
@@ -541,6 +815,11 @@ onMounted(() => {
         padding: 32px 18px;
       }
 
+      .source-search-summary,
+      .source-search-empty {
+        margin: 16px;
+      }
+
       .drag-import-mask {
         inset: 12px;
       }
@@ -586,7 +865,23 @@ onMounted(() => {
       background: rgba(255, 255, 255, 0.04);
     }
 
+    .source-search-summary {
+      border-color: #3d434a;
+      color: #d5d8dc;
+      background: rgba(255, 255, 255, 0.04);
+    }
+
+    .source-search-empty {
+      border-color: #3d434a;
+      color: #9aa1aa;
+      background: rgba(255, 255, 255, 0.04);
+    }
+
     .empty-shelf-description,
+    .source-search-keyword,
+    .source-search-report,
+    .source-search-report-details,
+    .source-search-tip,
     .drag-import-description {
       color: #9aa1aa;
     }

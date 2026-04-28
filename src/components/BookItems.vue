@@ -4,7 +4,7 @@
       <div
         class="book"
         v-for="book in books"
-        :key="book.bookUrl"
+        :key="getBookKey(book)"
         @click="handleClick(book)"
       >
         <div class="cover-img">
@@ -12,7 +12,7 @@
             class="cover"
             :src="getCover(book)"
             :key="book.coverUrl"
-            @error.once="proxyImage"
+            @error.once="proxyImage($event, book)"
             alt=""
             loading="lazy"
           />
@@ -20,17 +20,30 @@
         <div class="info">
           <div class="name">{{ book.name }}</div>
           <div class="sub">
-            <div class="author">{{ book.author }}</div>
-            <div class="update-info">
+            <div class="author">{{ book.author || '作者未知' }}</div>
+            <div v-if="isSourceSearchBook(book)" class="update-info">
+              <div class="dot">•</div>
+              <div class="date">{{ book.sourceName }}</div>
+            </div>
+            <div v-else class="update-info">
               <div class="dot">•</div>
               <div class="size">共{{ book.totalChapterNum }}章</div>
               <div class="dot">•</div>
               <div class="date">{{ dateFormat(book.lastCheckTime) }}</div>
             </div>
           </div>
-          <div class="dur-chapter">已读：{{ book.durChapterTitle }}</div>
-          <div class="last-chapter">最新：{{ book.latestChapterTitle }}</div>
+          <div v-if="!isSourceSearchBook(book)" class="dur-chapter">
+            已读：{{ book.durChapterTitle }}
+          </div>
+          <div v-else-if="book.intro" class="intro">{{ book.intro }}</div>
+          <div v-else-if="getSourceDescription(book)" class="intro">
+            {{ getSourceDescription(book) }}
+          </div>
+          <div v-if="book.latestChapterTitle" class="last-chapter">
+            最新：{{ book.latestChapterTitle }}
+          </div>
           <el-button
+            v-if="!isSourceSearchBook(book)"
             class="delete-book"
             text
             type="danger"
@@ -45,27 +58,68 @@
   </div>
 </template>
 <script setup lang="ts">
-import type { Book } from '@/book'
+import type { Book, SourceSearchBook } from '@/book'
 import { dateFormat, isLegadoUrl } from '../utils/utils'
 import API from '@api'
 
+type BookItem = Book | SourceSearchBook
+
 defineProps<{
-  books: Book[]
+  books: BookItem[]
 }>()
 
 const emit = defineEmits<{
-  bookClick: [book: Book]
+  bookClick: [book: BookItem]
   bookDelete: [book: Book]
 }>()
-const handleClick = (book: Book) => emit('bookClick', book)
+const isSourceSearchBook = (book: BookItem): book is SourceSearchBook =>
+  'entryType' in book && book.entryType === 'source-search'
+const handleClick = (book: BookItem) => emit('bookClick', book)
 const handleDelete = (book: Book) => emit('bookDelete', book)
-const getCover = ({ bookUrl, coverUrl }: Book) => {
-  if (coverUrl === undefined) return API.getProxyCoverUrl(bookUrl)
+const getBookKey = (book: BookItem) =>
+  isSourceSearchBook(book) ? book.resultKey : book.bookUrl
+
+const escapeSvgText = (text: string) =>
+  text.replace(/[&<>"']/g, char => {
+    const entities: Record<string, string> = {
+      '&': '&amp;',
+      '<': '&lt;',
+      '>': '&gt;',
+      '"': '&quot;',
+      "'": '&apos;',
+    }
+    return entities[char]
+  })
+
+const getPlaceholderCover = (book: BookItem) => {
+  const title = escapeSvgText(book.name || '阅读')
+  const subtitle = escapeSvgText(
+    isSourceSearchBook(book) ? book.sourceName : '本地书籍',
+  )
+  const initial = escapeSvgText(Array.from(book.name || '书')[0] ?? '书')
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="168" height="224" viewBox="0 0 168 224"><defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#f4d7a1"/><stop offset="1" stop-color="#7aa7d9"/></linearGradient></defs><rect width="168" height="224" rx="12" fill="url(#g)"/><text x="84" y="92" text-anchor="middle" font-size="48" font-family="serif" fill="#fff">${initial}</text><text x="84" y="142" text-anchor="middle" font-size="17" font-family="sans-serif" font-weight="700" fill="#fff">${title}</text><text x="84" y="172" text-anchor="middle" font-size="12" font-family="sans-serif" fill="rgba(255,255,255,.82)">${subtitle}</text></svg>`
+  return `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(svg)}`
+}
+
+const getSourceDescription = (book: BookItem) => {
+  if (!isSourceSearchBook(book)) return ''
+  return [book.kind, book.wordCount].filter(Boolean).join(' · ')
+}
+
+const getCover = (book: BookItem) => {
+  const { bookUrl, coverUrl } = book
+  if (coverUrl === undefined) {
+    return isSourceSearchBook(book)
+      ? getPlaceholderCover(book)
+      : API.getProxyCoverUrl(bookUrl)
+  }
   return isLegadoUrl(coverUrl) ? API.getProxyCoverUrl(coverUrl) : coverUrl
 }
-const proxyImage = (evt: Event) => {
+const proxyImage = (evt: Event, book: BookItem) => {
   const target = evt.target as HTMLImageElement
-  target.src = API.getProxyCoverUrl(target.src)
+  target.src = isSourceSearchBook(book)
+    ? getPlaceholderCover(book)
+    : API.getProxyCoverUrl(target.src)
 }
 </script>
 
@@ -138,6 +192,7 @@ const proxyImage = (evt: Event) => {
           padding-left: 0;
         }
 
+        .intro,
         .dur-chapter,
         .last-chapter {
           color: #969ba3;
