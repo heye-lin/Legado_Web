@@ -204,10 +204,24 @@ const getBookContent = async (
 const searchBookSources = async (
   searchKey: string,
   options: { signal?: AbortSignal } = {},
-): ApiResult<SourceSearchResult> => {
-  await getSources('bookSource')
-  return standaloneApi.searchBookSources(searchKey, options)
-}
+): ApiResult<SourceSearchResult> =>
+  withApiFallback(
+    async () => {
+      await getSources('bookSource')
+      return {
+        data: {
+          isSuccess: true,
+          errorMsg: '',
+          data: await request<SourceSearchResult>('/api/book-source-search', {
+            method: 'POST',
+            body: JSON.stringify({ keyword: searchKey }),
+            signal: options.signal,
+          }),
+        },
+      }
+    },
+    () => standaloneApi.searchBookSources(searchKey, options),
+  )
 
 const deleteBook = async (book: BaseBook): ApiResult<string> =>
   withApiFallback(

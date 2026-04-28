@@ -7,6 +7,7 @@ import https from 'node:https'
 import ipaddr from 'node:net'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import * as cheerio from 'cheerio'
 import pg from 'pg'
 
 const { Pool } = pg
@@ -38,6 +39,13 @@ const FORBIDDEN_PROXY_HEADER_NAMES = new Set([
   'upgrade',
 ])
 const FORBIDDEN_PROXY_HEADER_PREFIXES = ['proxy-', 'sec-']
+const SOURCE_SEARCH_CONCURRENCY = 4
+const SOURCE_SEARCH_TIMEOUT_MS = 8_000
+const SOURCE_SEARCH_RESULT_LIMIT = 50
+const SEARCH_KEY_TOKENS = ['{{key}}', '{{keyword}}', '{{searchKey}}']
+const COMPLEX_LEGADO_RULE_PATTERN =
+  /(^\s*(js:|@js:|xpath:|json:|regex:)|@js\b|<js>|&&|\|\|)/i
+const SELECTOR_INDEX_PATTERN = /^(.*)\.(-?\d+)(?::(-?\d+))?$/
 
 const DEFAULT_READ_CONFIG = {
   theme: 0,
@@ -769,6 +777,658 @@ const fetchSourceText = async requestBody => {
   return { finalUrl, text: content.toString('utf8') }
 }
 
+const unique = values => Array.from(new Set(values))
+
+const sourceSearchReport = (source, status, message, count = 0) => ({
+  sourceName: source.bookSourceName,
+  sourceUrl: source.bookSourceUrl,
+  status,
+  count,
+  message,
+})
+
+const parseSourceHeaders = rawHeader => {
+  const headers = {}
+  const warnings = []
+  const trimmed = rawHeader?.trim()
+  if (!trimmed) return { headers, warnings }
+
+  const appendHeader = (key, value) => {
+    if (isForbiddenProxyHeader(key)) {
+      warnings.push(`已忽略代理禁止转发的请求头 ${key}`)
+      return
+    }
+    headers[key] = value
+  }
+
+  try {
+    const parsed = JSON.parse(trimmed)
+    if (isRecord(parsed)) {
+      Object.entries(parsed).forEach(([key, value]) => {
+        if (typeof value === 'string') appendHeader(key, value)
+      })
+      return { headers, warnings: unique(warnings) }
+    }
+  } catch {
+    // Continue with common line-based syntax.
+  }
+
+  trimmed.split(/\r?\n/).forEach(line => {
+    const separatorIndex = line.search(/[:=]/)
+    if (separatorIndex <= 0) return
+    const key = line.slice(0, separatorIndex).trim()
+    const value = line.slice(separatorIndex + 1).trim()
+    if (key && value) appendHeader(key, value)
+  })
+  return { headers, warnings: unique(warnings) }
+}
+
+const fillSearchKey = (template, searchKey) => {
+  const encodedKey = encodeURIComponent(searchKey)
+  const withSearchKey = SEARCH_KEY_TOKENS.reduce(
+    (text, token) => text.split(token).join(encodedKey),
+    template,
+  )
+  return withSearchKey.split('{{page}}').join('1')
+}
+
+const splitSearchUrl = searchUrl => {
+  const trimmed = searchUrl.trim()
+  const configMatch = trimmed.match(/,\s*\{[\s\S]*\}\s*$/)
+  const inlineConfig =
+    configMatch === null
+      ? {}
+      : JSON.parse(trimmed.slice(configMatch.index + 1).trim())
+  const urlAndBody =
+    configMatch === null ? trimmed : trimmed.slice(0, configMatch.index).trim()
+  const bodySeparatorIndex = urlAndBody.indexOf('@')
+  if (bodySeparatorIndex === -1) {
+    return { url: urlAndBody, body: inlineConfig.body, config: inlineConfig }
+  }
+  return {
+    url: urlAndBody.slice(0, bodySeparatorIndex),
+    body: urlAndBody.slice(bodySeparatorIndex + 1),
+    config: inlineConfig,
+  }
+}
+
+const buildSourceSearchRequest = (source, searchKey) => {
+  const searchUrl = source.searchUrl?.trim()
+  if (!searchUrl) throw new Error('未配置搜索地址')
+
+  const { url, body, config } = splitSearchUrl(searchUrl)
+  const requestUrl = new URL(
+    fillSearchKey(url, searchKey),
+    source.bookSourceUrl,
+  ).toString()
+  const { headers, warnings } = parseSourceHeaders(source.header)
+  if (isRecord(config.headers)) {
+    Object.entries(config.headers).forEach(([key, value]) => {
+      if (typeof value === 'string' && !isForbiddenProxyHeader(key)) {
+        headers[key] = value
+      }
+    })
+  }
+  const method =
+    typeof config.method === 'string' ? config.method.toUpperCase() : undefined
+
+  if (body === undefined && method !== 'POST') {
+    return { url: requestUrl, method: 'GET', headers, warnings }
+  }
+
+  if (
+    !Object.keys(headers).some(
+      key => key.toLocaleLowerCase() === 'content-type',
+    )
+  ) {
+    headers['Content-Type'] = 'application/x-www-form-urlencoded;charset=UTF-8'
+  }
+  return {
+    url: requestUrl,
+    method: method === 'GET' ? 'GET' : 'POST',
+    headers,
+    body: typeof body === 'string' ? fillSearchKey(body, searchKey) : undefined,
+    warnings,
+  }
+}
+
+const parseRule = rule => {
+  const trimmed = rule?.trim()
+  if (!trimmed) return undefined
+
+  const [ruleBody, ...replacements] = trimmed.split('##')
+  const ruleParts = ruleBody.split('@').map(part => part.trim())
+  if (ruleParts.length === 1)
+    return {
+      selectors: [ruleParts[0]].filter(Boolean),
+      attribute: 'text',
+      replacements: replacements.filter(Boolean),
+    }
+
+  return {
+    selectors: ruleParts.slice(0, -1).filter(Boolean),
+    attribute: ruleParts.at(-1) || 'text',
+    replacements: replacements.filter(Boolean),
+  }
+}
+
+const applyRuleReplacements = (value, replacements) =>
+  replacements.reduce((text, pattern) => {
+    try {
+      return text.replace(new RegExp(pattern, 'g'), '')
+    } catch {
+      return text.split(pattern).join('')
+    }
+  }, value)
+
+const normalizeRuleText = value => {
+  if (value === undefined || value === null) return ''
+  if (typeof value === 'string') return value.trim()
+  if (typeof value === 'number' || typeof value === 'boolean') {
+    return String(value)
+  }
+  return JSON.stringify(value)
+}
+
+const selectorWithIndex = selector => {
+  const trimmed = selector.trim()
+  const match = trimmed.match(SELECTOR_INDEX_PATTERN)
+  if (match === null) return { selector: trimmed }
+
+  const cssSelector = match[1].trim()
+  if (!cssSelector) return { selector: trimmed }
+
+  return {
+    selector: cssSelector,
+    startIndex: Number(match[2]),
+    endIndex: match[3] === undefined ? undefined : Number(match[3]),
+  }
+}
+
+const normalizeIndex = (index, length) => (index < 0 ? length + index : index)
+
+const applySelectorIndex = (nodes, startIndex, endIndex) => {
+  if (startIndex === undefined) return nodes
+
+  const start = normalizeIndex(startIndex, nodes.length)
+  if (start < 0 || start >= nodes.length) return []
+  if (endIndex === undefined) return nodes.slice(start, start + 1)
+
+  const end = normalizeIndex(endIndex, nodes.length)
+  const upperBound = end < start ? start + 1 : end + 1
+  return nodes.slice(start, upperBound)
+}
+
+const selectRuleNodes = ($, scopes, rawSelector) => {
+  const { selector, startIndex, endIndex } = selectorWithIndex(rawSelector)
+  return scopes.flatMap(scope => {
+    const nodes =
+      selector === '' ? [scope] : $(scope).find(selector).toArray()
+    return applySelectorIndex(nodes, startIndex, endIndex)
+  })
+}
+
+const selectRuleTarget = ($, scope, selectors) => {
+  const nodes = selectors.reduce(
+    (current, selector) => selectRuleNodes($, current, selector),
+    [scope],
+  )
+  return nodes[0] === undefined ? undefined : $(nodes[0])
+}
+
+const readRuleValue = ($, scope, rule, baseUrl) => {
+  const parsedRule = parseRule(rule)
+  if (parsedRule === undefined) return ''
+
+  const target =
+    parsedRule.selectors.length === 0
+      ? scope
+      : selectRuleTarget($, scope.get(0), parsedRule.selectors)
+  if (target === undefined || target.length === 0) return ''
+
+  const attribute = parsedRule.attribute.toLocaleLowerCase()
+  if (attribute === 'text') {
+    return applyRuleReplacements(target.text().trim(), parsedRule.replacements)
+  }
+  if (attribute === 'html') {
+    return applyRuleReplacements(
+      target.html()?.trim() ?? '',
+      parsedRule.replacements,
+    )
+  }
+
+  const attrValue = target.attr(parsedRule.attribute)?.trim() ?? ''
+  if (!attrValue) return ''
+  if (attribute === 'href' || attribute === 'src') {
+    return applyRuleReplacements(
+      new URL(attrValue, baseUrl).toString(),
+      parsedRule.replacements,
+    )
+  }
+  return applyRuleReplacements(attrValue, parsedRule.replacements)
+}
+
+const readOptionalRuleValue = ($, scope, rule, baseUrl) => {
+  try {
+    return readRuleValue($, scope, rule, baseUrl)
+  } catch {
+    return ''
+  }
+}
+
+const isJsonPathRule = rule => /^\s*\$/.test(rule ?? '')
+
+const collectJsonProperty = (value, property, results = []) => {
+  if (Array.isArray(value)) {
+    value.forEach(item => collectJsonProperty(item, property, results))
+    return results
+  }
+  if (!isRecord(value)) return results
+
+  Object.entries(value).forEach(([key, child]) => {
+    if (key === property) results.push(child)
+    collectJsonProperty(child, property, results)
+  })
+  return results
+}
+
+const expandJsonToken = (value, token) => {
+  if (token === '*') {
+    if (Array.isArray(value)) return value
+    return isRecord(value) ? Object.values(value) : []
+  }
+
+  const match = token.match(/^([^[\]]+)(?:\[(-?\d+|\*)\])?$/)
+  if (match === null || !isRecord(value)) return []
+
+  const child = value[match[1]]
+  const index = match[2]
+  if (index === undefined) return [child]
+  if (index === '*') {
+    if (Array.isArray(child)) return child
+    return isRecord(child) ? Object.values(child) : []
+  }
+
+  if (!Array.isArray(child)) return []
+  const normalizedIndex = normalizeIndex(Number(index), child.length)
+  return child[normalizedIndex] === undefined ? [] : [child[normalizedIndex]]
+}
+
+const readJsonPathValues = (value, path) => {
+  const trimmed = path.trim()
+  if (trimmed === '$') return [value]
+  if (trimmed.startsWith('$..')) {
+    const [property, ...rest] = trimmed.slice(3).split('.').filter(Boolean)
+    if (!property) return []
+    const propertyMatch = property.match(/^([^[\]]+)(?:\[\*\])?$/)
+    if (propertyMatch === null) return []
+    const values = collectJsonProperty(value, propertyMatch[1])
+    const expanded =
+      property.endsWith('[*]') || Array.isArray(values[0])
+        ? values.flatMap(item => (Array.isArray(item) ? item : [item]))
+        : values
+    return rest.reduce(
+      (current, token) => current.flatMap(item => expandJsonToken(item, token)),
+      expanded,
+    )
+  }
+  if (!trimmed.startsWith('$.')) return []
+
+  return trimmed
+    .slice(2)
+    .split('.')
+    .filter(Boolean)
+    .reduce(
+      (current, token) => current.flatMap(item => expandJsonToken(item, token)),
+      [value],
+    )
+}
+
+const readJsonPathText = (value, path) =>
+  readJsonPathValues(value, path)
+    .map(normalizeRuleText)
+    .filter(Boolean)
+    .join(',')
+
+const readJsonRuleValue = (item, rule) => {
+  const parsedRule = parseRule(rule)
+  if (parsedRule === undefined) return ''
+
+  const [ruleBody] = rule.trim().split('##')
+  const templateValue = ruleBody.replace(/\{\{(.*?)\}\}/g, (_, expression) => {
+    const path = expression.trim()
+    return path === '' ? '' : readJsonPathText(item, path)
+  })
+  const value = isJsonPathRule(ruleBody)
+    ? readJsonPathText(item, ruleBody)
+    : templateValue
+  return applyRuleReplacements(value, parsedRule.replacements)
+}
+
+const isHttpUrl = value => {
+  try {
+    const url = new URL(value)
+    return url.protocol === 'http:' || url.protocol === 'https:'
+  } catch {
+    return false
+  }
+}
+
+const resolveHttpUrl = (value, baseUrl) => {
+  const trimmed = value.trim()
+  if (!trimmed) return ''
+  try {
+    const url = new URL(trimmed, baseUrl)
+    return url.protocol === 'http:' || url.protocol === 'https:'
+      ? url.toString()
+      : ''
+  } catch {
+    return ''
+  }
+}
+
+const resolveImageUrl = (value, baseUrl) => {
+  const trimmed = value.trim()
+  if (!trimmed) return ''
+  try {
+    const url = new URL(trimmed, baseUrl)
+    if (url.protocol === 'http:' || url.protocol === 'https:') {
+      return url.toString()
+    }
+    if (url.protocol === 'data:' && url.toString().startsWith('data:image/')) {
+      return url.toString()
+    }
+    return ''
+  } catch {
+    return ''
+  }
+}
+
+const isComplexLegadoRule = rule => COMPLEX_LEGADO_RULE_PATTERN.test(rule ?? '')
+
+const buildSourceSearchBook = ($, source, node, baseUrl, index) => {
+  const rule = source.ruleSearch ?? {}
+  const scope = $(node)
+  const name = readRuleValue($, scope, rule.name, baseUrl)
+  if (!name) return undefined
+
+  const bookUrl = resolveHttpUrl(
+    readRuleValue($, scope, rule.bookUrl, baseUrl),
+    baseUrl,
+  )
+  if (!bookUrl) return undefined
+
+  const coverUrl = resolveImageUrl(
+    readOptionalRuleValue($, scope, rule.coverUrl, baseUrl),
+    baseUrl,
+  )
+  const now = Date.now()
+  return {
+    entryType: 'source-search',
+    name,
+    author: readOptionalRuleValue($, scope, rule.author, baseUrl),
+    bookUrl,
+    kind: readOptionalRuleValue($, scope, rule.kind, baseUrl) || undefined,
+    wordCount:
+      readOptionalRuleValue($, scope, rule.wordCount, baseUrl) || undefined,
+    sourceName: source.bookSourceName,
+    sourceUrl: source.bookSourceUrl,
+    origin: source.bookSourceUrl,
+    originName: source.bookSourceName,
+    type: source.bookSourceType,
+    coverUrl: coverUrl || undefined,
+    intro: readOptionalRuleValue($, scope, rule.intro, baseUrl) || undefined,
+    latestChapterTitle:
+      readOptionalRuleValue($, scope, rule.lastChapter, baseUrl) || undefined,
+    tocUrl: bookUrl,
+    resultKey: `${source.bookSourceUrl}\u0000${bookUrl}`,
+    resultIndex: index,
+    originOrder: source.customOrder,
+    weight: source.weight,
+    searchedAt: now,
+    time: now,
+  }
+}
+
+const buildJsonSourceSearchBook = (source, item, baseUrl, index) => {
+  const rule = source.ruleSearch ?? {}
+  const name = readJsonRuleValue(item, rule.name)
+  if (!name) return undefined
+
+  const bookUrl = resolveHttpUrl(readJsonRuleValue(item, rule.bookUrl), baseUrl)
+  if (!bookUrl) return undefined
+
+  const coverUrl = resolveImageUrl(
+    readJsonRuleValue(item, rule.coverUrl),
+    baseUrl,
+  )
+  const now = Date.now()
+  return {
+    entryType: 'source-search',
+    name,
+    author: readJsonRuleValue(item, rule.author),
+    bookUrl,
+    kind: readJsonRuleValue(item, rule.kind) || undefined,
+    wordCount: readJsonRuleValue(item, rule.wordCount) || undefined,
+    sourceName: source.bookSourceName,
+    sourceUrl: source.bookSourceUrl,
+    origin: source.bookSourceUrl,
+    originName: source.bookSourceName,
+    type: source.bookSourceType,
+    coverUrl: coverUrl || undefined,
+    intro: readJsonRuleValue(item, rule.intro) || undefined,
+    latestChapterTitle: readJsonRuleValue(item, rule.lastChapter) || undefined,
+    tocUrl: bookUrl,
+    resultKey: `${source.bookSourceUrl}\u0000${bookUrl}`,
+    resultIndex: index,
+    originOrder: source.customOrder,
+    weight: source.weight,
+    searchedAt: now,
+    time: now,
+  }
+}
+
+const appendWarnings = (message, warnings) => {
+  const text = unique(warnings).join('；')
+  return text ? `${message}；${text}` : message
+}
+
+const isSelectorSyntaxError = error =>
+  error instanceof Error &&
+  /(selector|pseudo|expected|unmatched|empty sub-selector|invalid)/i.test(
+    error.message,
+  )
+
+const searchSingleBookSource = async (source, searchKey) => {
+  if (source.bookSourceUrl === 'https://example.com') {
+    return {
+      books: [],
+      report: sourceSearchReport(
+        source,
+        'skipped',
+        '示例书源不会参与搜索，请在书源管理中导入真实书源。',
+      ),
+    }
+  }
+
+  if (!source.enabled) {
+    return {
+      books: [],
+      report: sourceSearchReport(source, 'skipped', '书源未启用'),
+    }
+  }
+
+  if (!isHttpUrl(source.bookSourceUrl)) {
+    return {
+      books: [],
+      report: sourceSearchReport(
+        source,
+        'unsupported',
+        '书源域名必须是 http/https URL',
+      ),
+    }
+  }
+
+  if (!source.searchUrl?.trim()) {
+    return {
+      books: [],
+      report: sourceSearchReport(source, 'skipped', '未配置搜索地址'),
+    }
+  }
+
+  const ruleSearch = source.ruleSearch ?? {}
+  const listRule = ruleSearch.bookList?.trim()
+  if (!listRule) {
+    return {
+      books: [],
+      report: sourceSearchReport(source, 'skipped', '未配置搜索列表规则'),
+    }
+  }
+  if (!ruleSearch.name?.trim()) {
+    return {
+      books: [],
+      report: sourceSearchReport(source, 'skipped', '未配置书名规则'),
+    }
+  }
+  if (!ruleSearch.bookUrl?.trim()) {
+    return {
+      books: [],
+      report: sourceSearchReport(source, 'skipped', '未配置详情地址规则'),
+    }
+  }
+
+  const complexRule = [
+    listRule,
+    ruleSearch.name,
+    ruleSearch.author,
+    ruleSearch.kind,
+    ruleSearch.wordCount,
+    ruleSearch.lastChapter,
+    ruleSearch.intro,
+    ruleSearch.coverUrl,
+    ruleSearch.bookUrl,
+  ].find(isComplexLegadoRule)
+  if (complexRule !== undefined) {
+    return {
+      books: [],
+      report: sourceSearchReport(
+        source,
+        'unsupported',
+        `规则「${complexRule}」超出当前 Web 搜索支持范围`,
+      ),
+    }
+  }
+
+  const warnings = []
+  if (source.enabledCookieJar) {
+    warnings.push('该书源启用了 CookieJar，服务端本次按匿名请求搜索')
+  }
+  if (source.jsLib) warnings.push('jsLib 暂不执行')
+  if (source.loginUi || source.loginCheckJs) warnings.push('登录脚本暂不执行')
+  if (source.coverDecodeJs) warnings.push('封面解密 JS 暂不执行')
+
+  try {
+    const request = buildSourceSearchRequest(source, searchKey)
+    warnings.push(...request.warnings)
+    const { finalUrl, content } = await requestBytes(request.url, {
+      method: request.method,
+      headers: normalizeProxyHeaders(request.headers),
+      body: request.body,
+      timeout: SOURCE_SEARCH_TIMEOUT_MS,
+    })
+    const text = content.toString('utf8')
+    const books = isJsonPathRule(listRule)
+      ? readJsonPathValues(JSON.parse(text.replace(/^\uFEFF/, '')), listRule)
+          .map((item, index) =>
+            buildJsonSourceSearchBook(source, item, finalUrl, index),
+          )
+          .filter(Boolean)
+          .slice(0, SOURCE_SEARCH_RESULT_LIMIT)
+      : (() => {
+          const $ = cheerio.load(text)
+          return $(listRule)
+            .toArray()
+            .map((node, index) =>
+              buildSourceSearchBook($, source, node, finalUrl, index),
+            )
+            .filter(Boolean)
+            .slice(0, SOURCE_SEARCH_RESULT_LIMIT)
+        })()
+
+    return {
+      books,
+      report: sourceSearchReport(
+        source,
+        books.length > 0 ? 'success' : 'empty',
+        appendWarnings(
+          books.length > 0
+            ? `找到 ${books.length} 条结果，最多显示前 ${SOURCE_SEARCH_RESULT_LIMIT} 条`
+            : '请求成功，但搜索规则没有解析出书籍',
+          warnings,
+        ),
+        books.length,
+      ),
+    }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    const status = isSelectorSyntaxError(error) ? 'unsupported' : 'failed'
+    return {
+      books: [],
+      report: sourceSearchReport(
+        source,
+        status,
+        appendWarnings(
+          status === 'unsupported'
+            ? `规则语法不支持：${message}`
+            : `搜索失败：${message}`,
+          warnings,
+        ),
+      ),
+    }
+  }
+}
+
+const mapWithConcurrency = async (items, concurrency, mapper) => {
+  const results = new Array(items.length)
+  let nextIndex = 0
+  const workerCount = Math.min(concurrency, items.length)
+  await Promise.all(
+    Array.from({ length: workerCount }, async () => {
+      while (nextIndex < items.length) {
+        const index = nextIndex
+        nextIndex += 1
+        results[index] = await mapper(items[index], index)
+      }
+    }),
+  )
+  return results.filter(Boolean)
+}
+
+const compareBookSources = (left, right) =>
+  (left.customOrder ?? 0) - (right.customOrder ?? 0) ||
+  (right.weight ?? 0) - (left.weight ?? 0) ||
+  String(left.bookSourceName).localeCompare(String(right.bookSourceName))
+
+const searchBookSources = async keyword => {
+  const searchKey = keyword.trim()
+  if (!searchKey) return { books: [], reports: [] }
+
+  const sources = (await getSources('bookSource')).sort(compareBookSources)
+  const results = await mapWithConcurrency(
+    sources,
+    SOURCE_SEARCH_CONCURRENCY,
+    source => searchSingleBookSource(source, searchKey),
+  )
+  const bookMap = new Map()
+  const reports = []
+  results.forEach(result => {
+    reports.push(result.report)
+    result.books.forEach(book => bookMap.set(book.resultKey, book))
+  })
+
+  return { books: Array.from(bookMap.values()), reports }
+}
+
 const fetchSubscriptionJson = async rawUrl => {
   const url = await validatePublicUrl(rawUrl)
   const headers = {
@@ -851,6 +1511,15 @@ const handleApi = async (req, res, url) => {
     if (url.pathname === '/api/read-config' && req.method === 'PUT') {
       await saveReadConfig(await readJsonBody(req))
       sendApiOk(res, '阅读配置已保存到 PG')
+      return true
+    }
+
+    if (url.pathname === '/api/book-source-search' && req.method === 'POST') {
+      const body = await readJsonBody(req)
+      if (!isRecord(body) || typeof body.keyword !== 'string') {
+        throw new Error('搜索请求缺少 keyword')
+      }
+      sendApiOk(res, await searchBookSources(body.keyword))
       return true
     }
 

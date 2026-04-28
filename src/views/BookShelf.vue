@@ -388,7 +388,7 @@ const getSourceSearchEmptyMessage = (reports: SourceSearchReport[]) => {
     return '没有可搜索书源，请启用书源并配置搜索地址、搜索列表、书名和详情地址规则。'
   }
   if (reports.every(report => report.status === 'unsupported')) {
-    return '导入的书源超出当前纯 Web querySelector 搜索范围。'
+    return '导入的书源超出当前 Web 服务端搜索规则支持范围。'
   }
   if (reports.every(report => report.status === 'failed')) {
     return '所有书源搜索失败，常见原因是目标站网络失败、代理无法访问、反爬拦截或规则不兼容。'

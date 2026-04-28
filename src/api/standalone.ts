@@ -1186,7 +1186,7 @@ const searchSingleBookSource = async (
       report: sourceSearchReport(
         source,
         'unsupported',
-        `规则「${complexRule}」超出当前纯 Web querySelector 支持范围`,
+        `规则「${complexRule}」超出当前浏览器降级搜索支持范围`,
       ),
     }
   }
