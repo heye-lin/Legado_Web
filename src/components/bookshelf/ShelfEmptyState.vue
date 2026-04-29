@@ -31,30 +31,47 @@ const emit = defineEmits<{
 
 <style lang="scss" scoped>
 .empty-shelf-state {
-  flex: 1;
+  position: relative;
+  width: 100%;
+  max-width: 920px;
+  margin: auto;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
   box-sizing: border-box;
-  min-height: calc(100vh - 96px);
+  min-height: clamp(380px, 58vh, 560px);
+  padding: 40px 36px;
   border: 1px dashed var(--shelf-panel-border);
-  border-radius: 18px;
+  border-radius: 22px;
   color: var(--shelf-text);
   text-align: center;
-  background: var(--shelf-panel-bg);
-  box-shadow: 0 12px 32px rgba(15, 23, 42, 0.06);
+  background:
+    radial-gradient(circle at top, rgba(64, 158, 255, 0.08), transparent 38%),
+    var(--shelf-panel-bg);
+  box-shadow: var(--shelf-card-shadow, 0 12px 32px rgba(15, 23, 42, 0.06));
+
+  &::before {
+    position: absolute;
+    inset: 16px;
+    border: 1px solid rgba(64, 158, 255, 0.08);
+    border-radius: 18px;
+    pointer-events: none;
+    content: '';
+  }
 }
 
 .empty-shelf-title {
   margin-bottom: 12px;
-  font-size: 24px;
+  font-size: 22px;
   font-weight: 700;
   font-family: FZZCYSK;
+  line-height: 1.3;
 }
 
 .empty-shelf-description {
   margin-bottom: 24px;
+  max-width: 560px;
   color: var(--shelf-muted);
   font-size: 14px;
   line-height: 1.7;
@@ -74,6 +91,11 @@ const emit = defineEmits<{
   justify-content: center;
   gap: 10px;
 
+  :deep(.el-button) {
+    min-width: 112px;
+    border-radius: 999px;
+  }
+
   :deep(.el-button + .el-button) {
     margin-left: 0;
   }
@@ -81,9 +103,30 @@ const emit = defineEmits<{
 
 @media screen and (max-width: 750px) {
   .empty-shelf-state {
-    min-height: 360px;
-    margin: 16px;
-    padding: 32px 18px;
+    width: auto;
+    max-width: none;
+    min-height: 320px;
+    margin: 0;
+    padding: 28px 16px;
+    border-radius: 18px;
+
+    &::before {
+      inset: 12px;
+      border-radius: 14px;
+    }
+  }
+
+  .empty-shelf-title {
+    font-size: 20px;
+  }
+
+  .empty-shelf-actions {
+    width: 100%;
+
+    :deep(.el-button) {
+      flex: 1 1 112px;
+      min-width: 0;
+    }
   }
 }
 </style>

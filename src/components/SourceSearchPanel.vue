@@ -1,13 +1,16 @@
 <template>
   <section class="source-search-summary" aria-live="polite">
     <div class="source-search-summary-heading">
-      <div>
-        <strong class="source-search-title">
-          {{ isSearching ? '正在搜索在线书籍' : resultTitleText }}
-        </strong>
-        <span class="source-search-keyword">「{{ keyword }}」</span>
-        <div v-if="reports.length > 0" class="source-search-subtitle">
-          {{ reportSummaryText }}
+      <div class="source-search-heading-copy">
+        <span class="source-search-eyebrow">在线搜书</span>
+        <h2 class="source-search-title">
+          <span>{{ isSearching ? '正在搜索' : resultTitleText }}</span>
+          <span class="source-search-keyword">「{{ keyword }}」</span>
+        </h2>
+        <div v-if="sourceStatItems.length > 0" class="source-search-stats">
+          <span v-for="item in sourceStatItems" :key="item">
+            {{ item }}
+          </span>
         </div>
       </div>
       <div class="source-search-actions">
@@ -15,11 +18,14 @@
           size="small"
           type="primary"
           :loading="isSearching"
+          :disabled="isSearching"
           @click="emit('retry')"
         >
-          重新搜索
+          {{ isSearching ? '搜索中' : '重新搜索' }}
         </el-button>
-        <el-button size="small" @click="emit('clear')"> 返回书架 </el-button>
+        <el-button size="small" @click="emit('clear')">
+          {{ isSearching ? '取消搜索' : '返回书架' }}
+        </el-button>
         <el-button size="small" @click="emit('manage')"> 管理书源 </el-button>
       </div>
     </div>
@@ -38,13 +44,14 @@
     </div>
 
     <div class="source-search-tip">
-      {{ tipText }}
+      <span class="source-search-tip-label">提示</span>
+      <span>{{ tipText }}</span>
     </div>
 
     <div v-if="showReportDetails" class="source-search-report-details">
       <div class="source-search-report-details-header">
         <span>{{ reportDetailsTitle }}</span>
-        <span v-if="successHidden">成功项默认收起，展开可查看全部源。</span>
+        <span v-if="successHidden">已隐藏成功源</span>
       </div>
       <div
         v-for="report in reportDetails"
@@ -75,7 +82,7 @@
     </div>
 
     <div v-if="topIssues.length > 0" class="source-search-quick-hint">
-      <strong>优先处理：</strong>
+      <strong>问题提示</strong>
       <span>{{ topIssues.join('；') }}</span>
     </div>
   </section>
@@ -111,12 +118,12 @@ const reportMeta: Record<
   SourceSearchReport['status'],
   { label: string; type: SourceSearchReportTagType }
 > = {
-  success: { label: '搜索成功', type: 'success' },
-  empty: { label: '请求成功无结果', type: 'info' },
-  failed: { label: '请求/解析失败', type: 'danger' },
-  unsupported: { label: '规则不支持', type: 'warning' },
-  skipped: { label: '已跳过', type: 'info' },
-  truncated: { label: '结果截断', type: 'info' },
+  success: { label: '成功', type: 'success' },
+  empty: { label: '无结果', type: 'info' },
+  failed: { label: '失败', type: 'danger' },
+  unsupported: { label: '不支持', type: 'warning' },
+  skipped: { label: '跳过', type: 'info' },
+  truncated: { label: '截断', type: 'info' },
 }
 
 const reportStatusOrder: SourceSearchReport['status'][] = [
@@ -157,9 +164,8 @@ const successfulSourceCount = computed(
 )
 
 const resultTitleText = computed(() => {
-  if (sourceReports.value.length === 0)
-    return `在线搜书结果：${props.resultCount} 本`
-  return `在线搜书结果：${props.resultCount} 本，${successfulSourceCount.value}/${sourceReports.value.length} 个源成功`
+  if (props.resultCount > 0) return `找到 ${props.resultCount} 本`
+  return '暂无可显示结果'
 })
 
 const reportCountItems = computed(() =>
@@ -193,7 +199,26 @@ const issueReports = computed(() =>
     ),
 )
 
-const reportPreviewLimit = 8
+const problemSourceCount = computed(
+  () =>
+    issueReports.value.filter(report => report.sourceName !== '系统').length,
+)
+
+const sourceStatItems = computed(() => {
+  if (props.reports.length === 0) return []
+  const items: string[] = []
+  if (sourceReports.value.length > 0) {
+    items.push(
+      `${successfulSourceCount.value}/${sourceReports.value.length} 个源命中`,
+    )
+  }
+  if (problemSourceCount.value > 0) {
+    items.push(`${problemSourceCount.value} 个源需处理`)
+  }
+  return items
+})
+
+const reportPreviewLimit = 5
 const reportDetails = computed(() =>
   reportsExpanded.value
     ? props.reports
@@ -238,31 +263,20 @@ const reportDetailsTitle = computed(() => {
     : '问题明细'
 })
 
-const reportSummaryText = computed(() => {
-  const counts = reportCountItems.value
-    .map(item => `${item.label} ${item.count}`)
-    .join(' · ')
-  return counts
-    ? `${counts} · 返回结果 ${props.resultCount} 本`
-    : `返回结果 ${props.resultCount} 本`
-})
-
 const topIssues = computed(() => {
   const messages: string[] = []
   const { failed, unsupported, empty } = reportCounts.value
-  if (failed > 0) messages.push(`${failed} 个源请求失败或被目标站拦截`)
+  if (failed > 0) messages.push(`${failed} 个源请求失败或被拦截`)
   if (unsupported > 0)
-    messages.push(
-      `${unsupported} 个源使用当前 Web 搜索不支持的规则或运行时能力`,
-    )
-  if (empty > 0) messages.push(`${empty} 个源请求成功但规则未命中`)
+    messages.push(`${unsupported} 个源使用 Web 暂不支持的规则`)
+  if (empty > 0) messages.push(`${empty} 个源规则未命中`)
   return messages.slice(0, 3)
 })
 
 const tipText = computed(() =>
   props.apiTargetName === 'PostgreSQL 持久化'
-    ? '点击卡片可在站内预览详情和目录；点击“加入书架”会通过生产服务解析详情/目录并保存到 PostgreSQL，阅读章节时按需解析正文并缓存。复杂 JS、登录、CookieJar 和反爬规则仍不支持。'
-    : `点击卡片需要生产服务在站内预览详情和目录；点击“加入书架”需要生产服务解析详情/目录并保存，当前为${props.apiTargetName}模式，纯静态/浏览器本地降级模式不支持书源结果入库。复杂 JS、登录、CookieJar 和反爬规则仍不支持。`,
+    ? '点击结果可站内预览详情和目录；加入书架后保存到 PostgreSQL，章节正文按需缓存。不支持复杂 JS、登录、CookieJar 和反爬规则。'
+    : `当前为${props.apiTargetName}模式：站内预览和加入书架需要生产服务；不支持复杂 JS、登录、CookieJar 和反爬规则。`,
 )
 
 const reportStatusText = (status: SourceSearchReport['status']) =>
@@ -308,20 +322,58 @@ const getReportTitle = (report: SourceSearchReport) =>
   gap: 16px;
 }
 
-.source-search-title {
-  font-size: 16px;
+.source-search-heading-copy {
+  min-width: 0;
 }
 
-.source-search-subtitle {
+.source-search-eyebrow {
+  display: inline-flex;
+  align-items: center;
+  height: 22px;
+  padding: 0 9px;
+  border: 1px solid rgba(64, 158, 255, 0.18);
+  border-radius: 999px;
+  color: var(--el-color-primary);
+  background: rgba(64, 158, 255, 0.08);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.source-search-title {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  margin: 8px 0 0;
+  color: var(--shelf-text);
+  font-size: 18px;
+  line-height: 1.35;
+}
+
+.source-search-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 12px;
   margin-top: 6px;
   color: var(--shelf-soft-muted);
   font-size: 13px;
   line-height: 1.5;
+
+  span + span {
+    position: relative;
+
+    &::before {
+      position: absolute;
+      left: -8px;
+      color: var(--shelf-divider, rgba(148, 163, 184, 0.3));
+      content: '•';
+    }
+  }
 }
 
 .source-search-keyword {
-  margin-left: 6px;
+  min-width: 0;
   color: var(--shelf-muted);
+  overflow-wrap: anywhere;
 }
 
 .source-search-actions {
@@ -339,7 +391,7 @@ const getReportTitle = (report: SourceSearchReport) =>
 .source-search-report-details,
 .source-search-tip,
 .source-search-quick-hint {
-  margin-top: 10px;
+  margin-top: 12px;
   color: var(--shelf-muted);
   font-size: 14px;
   line-height: 1.6;
@@ -349,6 +401,25 @@ const getReportTitle = (report: SourceSearchReport) =>
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
+}
+
+.source-search-tip,
+.source-search-quick-hint {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--shelf-subpanel-border, rgba(148, 163, 184, 0.18));
+  border-radius: 12px;
+  background: var(--shelf-subpanel-bg, rgba(248, 250, 252, 0.72));
+}
+
+.source-search-tip-label,
+.source-search-quick-hint strong {
+  flex: 0 0 auto;
+  color: var(--shelf-text);
+  font-size: 13px;
+  font-weight: 700;
 }
 
 .source-search-report-details {
@@ -397,8 +468,7 @@ const getReportTitle = (report: SourceSearchReport) =>
 }
 
 .source-search-quick-hint {
-  padding: 10px 12px;
-  border-radius: 12px;
+  border-color: rgba(230, 162, 60, 0.18);
   background: var(--shelf-warning-bg, rgba(230, 162, 60, 0.1));
 }
 
@@ -409,28 +479,68 @@ const getReportTitle = (report: SourceSearchReport) =>
 
 @media screen and (max-width: 750px) {
   .source-search-summary {
-    margin: 16px;
+    margin: 12px;
+    padding: 14px;
+    border-radius: 18px;
   }
 
   .source-search-summary-heading,
   .source-search-report-details-header {
     flex-direction: column;
     align-items: stretch;
+    gap: 12px;
   }
 
   .source-search-actions {
-    justify-content: flex-start;
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    justify-content: stretch;
+
+    :deep(.el-button) {
+      padding-right: 8px;
+      padding-left: 8px;
+    }
+  }
+
+  .source-search-title {
+    font-size: 17px;
+  }
+
+  .source-search-stats {
+    gap: 4px 8px;
+
+    span {
+      width: 100%;
+    }
+
+    span + span::before {
+      content: none;
+    }
   }
 
   .source-search-keyword {
     display: inline-block;
     max-width: 100%;
-    margin-left: 0;
     overflow-wrap: anywhere;
   }
 
+  .source-search-tip,
+  .source-search-quick-hint {
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  .source-search-report-detail {
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+
   .source-search-report-source {
-    max-width: 42vw;
+    max-width: calc(100% - 80px);
+  }
+
+  .source-search-report-message {
+    flex-basis: 100%;
   }
 }
 </style>

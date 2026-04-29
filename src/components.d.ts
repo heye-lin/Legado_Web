@@ -39,7 +39,6 @@ declare module 'vue' {
     RouterLink: typeof import('vue-router')['RouterLink']
     RouterView: typeof import('vue-router')['RouterView']
     ShelfEmptyState: typeof import('./components/bookshelf/ShelfEmptyState.vue')['default']
-    ShelfFeatureBar: typeof import('./components/bookshelf/ShelfFeatureBar.vue')['default']
     ShelfSidebar: typeof import('./components/bookshelf/ShelfSidebar.vue')['default']
     SourceBookPreviewDialog: typeof import('./components/SourceBookPreviewDialog.vue')['default']
     SourceDebug: typeof import('./components/SourceDebug.vue')['default']

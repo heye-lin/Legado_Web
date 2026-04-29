@@ -1,6 +1,5 @@
 import API from '@api'
 import type {
-  Book,
   SourceBookImportResult,
   SourceBookPreviewResult,
   SourceSearchFilter,
@@ -18,6 +17,10 @@ import {
   watch,
   type Ref,
 } from 'vue'
+import {
+  SOURCE_BOOK_SEARCH_DEFAULT_FILTER,
+  isSourceSearchBook,
+} from '@/utils/sourceSearch'
 
 type UseSourceSearchOptions = {
   searchWord: Ref<string>
@@ -55,11 +58,6 @@ const isHttpUrl = (value: string) => {
   }
 }
 
-const isSourceSearchBook = (
-  book: Book | SourceSearchBook,
-): book is SourceSearchBook =>
-  'entryType' in book && book.entryType === 'source-search'
-
 export const useSourceSearch = ({
   searchWord,
   loadingWrapper,
@@ -73,13 +71,18 @@ export const useSourceSearch = ({
   const isSearchingSources = ref(false)
   const sourceSearchDialogVisible = ref(false)
   const sourceSearchInput = ref('')
-  const sourceSearchSourceKeyword = ref('')
-  const sourceSearchEnabledFilter =
-    ref<NonNullable<SourceSearchFilter['enabled']>>('enabled')
-  const sourceSearchFeatureFilter =
-    ref<NonNullable<SourceSearchFilter['feature']>>('web')
-  const sourceSearchFieldFilter =
-    ref<NonNullable<SourceSearchFilter['field']>>('all')
+  const sourceSearchSourceKeyword = ref(
+    SOURCE_BOOK_SEARCH_DEFAULT_FILTER.keyword,
+  )
+  const sourceSearchEnabledFilter = ref<
+    NonNullable<SourceSearchFilter['enabled']>
+  >(SOURCE_BOOK_SEARCH_DEFAULT_FILTER.enabled)
+  const sourceSearchFeatureFilter = ref<
+    NonNullable<SourceSearchFilter['feature']>
+  >(SOURCE_BOOK_SEARCH_DEFAULT_FILTER.feature)
+  const sourceSearchFieldFilter = ref<NonNullable<SourceSearchFilter['field']>>(
+    SOURCE_BOOK_SEARCH_DEFAULT_FILTER.field,
+  )
   const sourceSearchReportsExpanded = ref(false)
   const importingSourceBookKeys = ref(new Set<string>())
   const previewDialogVisible = ref(false)
@@ -105,10 +108,10 @@ export const useSourceSearch = ({
   }))
 
   const resetSourceSearchFilters = () => {
-    sourceSearchSourceKeyword.value = ''
-    sourceSearchEnabledFilter.value = 'enabled'
-    sourceSearchFeatureFilter.value = 'web'
-    sourceSearchFieldFilter.value = 'all'
+    sourceSearchSourceKeyword.value = SOURCE_BOOK_SEARCH_DEFAULT_FILTER.keyword
+    sourceSearchEnabledFilter.value = SOURCE_BOOK_SEARCH_DEFAULT_FILTER.enabled
+    sourceSearchFeatureFilter.value = SOURCE_BOOK_SEARCH_DEFAULT_FILTER.feature
+    sourceSearchFieldFilter.value = SOURCE_BOOK_SEARCH_DEFAULT_FILTER.field
   }
 
   const resetSourceSearchState = () => {

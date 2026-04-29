@@ -21,7 +21,7 @@
                 : emit('sourceSearch')
             "
           >
-            {{ isSearchingSources ? '取消' : '在线搜书' }}
+            {{ isSearchingSources ? '取消搜索' : '在线搜书' }}
           </el-button>
         </template>
       </el-input>
@@ -43,25 +43,17 @@
         </div>
       </div>
       <div class="setting-wrapper">
-        <div class="setting-title">基本设定</div>
+        <div class="setting-title">数据与书源</div>
         <div class="setting-item">
-          <el-tag :type="apiTargetTagType" size="large" class="setting-connect">
+          <div class="setting-connect" :class="apiTargetTagType">
             {{ apiTargetName }}
-          </el-tag>
+          </div>
           <el-button
             class="standalone-action-button"
             size="small"
             @click="emit('openSourceManager')"
           >
             书源管理
-          </el-button>
-          <el-button
-            class="standalone-action-button source-action-button"
-            type="primary"
-            size="small"
-            @click="emit('openSourceSearchDialog')"
-          >
-            在线搜书
           </el-button>
           <el-button
             class="standalone-action-button"
@@ -132,7 +124,6 @@ const emit = defineEmits<{
   clearSourceSearch: []
   recentClick: []
   openSourceManager: []
-  openSourceSearchDialog: []
   importTxt: []
   exportBackup: []
   restoreBackup: []
@@ -157,43 +148,55 @@ const recentAriaLabel = computed(() =>
   display: flex;
   flex-direction: column;
   box-sizing: border-box;
-  width: 260px;
-  min-width: 260px;
+  width: 272px;
+  min-width: 272px;
   min-height: 100vh;
-  padding: 48px 36px;
+  padding: 40px 28px 32px;
   overflow-y: auto;
   background:
-    radial-gradient(
-      circle at 16% 4%,
-      rgba(64, 158, 255, 0.14),
-      transparent 32%
-    ),
+    radial-gradient(circle at 18% 0, rgba(64, 158, 255, 0.14), transparent 32%),
     var(--shelf-sidebar-bg);
   border-right: 1px solid var(--shelf-panel-border);
+
+  .navigation-title-wrapper {
+    padding-bottom: 2px;
+  }
 
   .navigation-title {
     font-size: 24px;
     font-weight: 700;
     font-family: FZZCYSK;
+    line-height: 1.2;
     color: var(--shelf-text);
   }
 
   .navigation-sub-title {
-    margin-top: 16px;
+    margin-top: 12px;
     color: var(--shelf-muted);
-    font-size: 16px;
+    font-size: 15px;
     font-weight: 300;
     font-family: FZZCYSK;
+    line-height: 1.5;
   }
 
   .search-wrapper {
     .search-input {
-      margin-top: 24px;
-      border-radius: 50%;
+      margin-top: 22px;
+      border-radius: 999px;
 
       :deep(.el-input__wrapper) {
-        border-color: var(--shelf-panel-border);
-        border-radius: 50px;
+        border-radius: 999px 0 0 999px;
+        background: var(--shelf-panel-bg);
+        box-shadow: 0 0 0 1px var(--shelf-panel-border) inset;
+      }
+
+      :deep(.el-input-group__append) {
+        border-radius: 0 999px 999px 0;
+        box-shadow: 0 0 0 1px var(--shelf-panel-border) inset;
+      }
+
+      :deep(.el-button) {
+        border-radius: 999px;
       }
     }
   }
@@ -204,29 +207,32 @@ const recentAriaLabel = computed(() =>
   }
 
   .recent-wrapper {
-    margin-top: 36px;
+    margin-top: 30px;
 
     .recent-title {
       color: var(--shelf-muted);
       font-size: 14px;
       font-family: FZZCYSK;
+      letter-spacing: 0.02em;
     }
 
     .reading-recent {
-      margin: 18px 0;
+      margin: 12px 0 0;
 
       .recent-book {
-        max-width: 100%;
-        min-height: 32px;
-        padding: 6px 12px;
+        display: block;
+        width: 100%;
+        min-height: 36px;
+        padding: 8px 12px;
         cursor: pointer;
         border: 1px solid var(--el-color-primary-light-5);
-        border-radius: 999px;
+        border-radius: 12px;
         color: var(--el-color-primary);
         background: var(--el-color-primary-light-9);
         font-size: 12px;
         font-weight: 600;
         font-family: inherit;
+        text-align: left;
         overflow: hidden;
         text-overflow: ellipsis;
         white-space: nowrap;
@@ -260,33 +266,63 @@ const recentAriaLabel = computed(() =>
   }
 
   .setting-wrapper {
-    margin-top: 36px;
+    margin-top: 30px;
 
     .setting-title {
       color: var(--shelf-muted);
       font-size: 14px;
       font-family: FZZCYSK;
+      letter-spacing: 0.02em;
     }
 
     .setting-connect {
-      margin-top: 16px;
+      display: flex;
+      justify-self: start;
+      align-items: center;
+      justify-content: center;
+      width: 100%;
+      min-height: 32px;
+      box-sizing: border-box;
+      border: 1px solid var(--el-border-color-lighter);
       cursor: default;
       font-size: 12px;
+      font-weight: 600;
+      border-radius: 10px;
+    }
+
+    .setting-connect.success {
+      border-color: var(--el-color-success-light-5);
+      color: var(--el-color-success);
+      background: var(--el-color-success-light-9);
+    }
+
+    .setting-connect.warning {
+      border-color: var(--el-color-warning-light-5);
+      color: var(--el-color-warning);
+      background: var(--el-color-warning-light-9);
+    }
+
+    .setting-connect.info {
+      border-color: var(--el-color-info-light-5);
+      color: var(--el-color-info);
+      background: var(--el-color-info-light-9);
     }
 
     .standalone-action-button {
       margin: 0;
-    }
-
-    .source-action-button {
-      display: none;
+      justify-content: flex-start;
+      border-radius: 10px;
     }
 
     .setting-item {
       display: grid;
       grid-template-columns: 1fr;
-      gap: 10px;
-      margin-top: 16px;
+      gap: 8px;
+      margin-top: 12px;
+
+      :deep(.el-button) {
+        width: 100%;
+      }
 
       :deep(.el-button + .el-button) {
         margin-left: 0;
@@ -296,7 +332,7 @@ const recentAriaLabel = computed(() =>
 
   .bottom-icons {
     margin-top: auto;
-    padding-top: 32px;
+    padding-top: 28px;
     display: flex;
     flex-direction: row;
     align-items: center;
@@ -311,6 +347,12 @@ const recentAriaLabel = computed(() =>
         opacity: 1;
         transform: translateY(-2px);
       }
+
+      img {
+        display: block;
+        width: 24px;
+        height: 24px;
+      }
     }
   }
 }
@@ -320,11 +362,15 @@ const recentAriaLabel = computed(() =>
     box-sizing: border-box;
     width: 100%;
     min-height: auto;
-    padding: 20px 24px;
+    flex: 0 0 auto;
+    padding: 16px var(--shelf-mobile-gutter, 16px);
+    overflow: visible;
+    border-right: 0;
+    border-bottom: 1px solid var(--shelf-panel-border);
 
     .navigation-title-wrapper {
       display: flex;
-      align-items: flex-end;
+      align-items: center;
       justify-content: space-between;
       white-space: nowrap;
       gap: 12px;
@@ -336,17 +382,25 @@ const recentAriaLabel = computed(() =>
 
     .navigation-sub-title {
       min-width: 0;
+      margin-top: 0;
       overflow: hidden;
       text-align: right;
       text-overflow: ellipsis;
       white-space: nowrap;
+      font-size: 14px;
+    }
+
+    .search-wrapper {
+      .search-input {
+        margin-top: 14px;
+      }
     }
 
     .bottom-wrapper {
       flex-direction: column;
 
       > * {
-        margin-top: 18px;
+        margin-top: 16px;
 
         .reading-recent,
         .setting-item {
@@ -356,13 +410,13 @@ const recentAriaLabel = computed(() =>
     }
 
     .setting-wrapper {
-      margin-top: 18px;
+      margin-top: 16px;
 
       .setting-item {
-        display: flex;
-        flex-wrap: wrap;
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
         gap: 8px;
-        align-items: center;
+        align-items: stretch;
       }
 
       .setting-connect,
@@ -370,8 +424,13 @@ const recentAriaLabel = computed(() =>
         margin: 0;
       }
 
+      .setting-connect {
+        grid-column: 1 / -1;
+      }
+
       .standalone-action-button {
         display: inline-flex;
+        justify-content: center;
       }
     }
 
@@ -383,11 +442,7 @@ const recentAriaLabel = computed(() =>
 
 :global(.night) .navigation-wrapper {
   background:
-    radial-gradient(
-      circle at 16% 4%,
-      rgba(64, 158, 255, 0.12),
-      transparent 32%
-    ),
+    radial-gradient(circle at 18% 0, rgba(64, 158, 255, 0.12), transparent 32%),
     var(--shelf-sidebar-bg);
 
   .navigation-title {
@@ -397,6 +452,10 @@ const recentAriaLabel = computed(() =>
   .search-wrapper {
     .search-input {
       :deep(.el-input__wrapper) {
+        background-color: var(--shelf-subpanel-bg);
+      }
+
+      :deep(.el-input-group__append) {
         background-color: var(--shelf-subpanel-bg);
       }
 

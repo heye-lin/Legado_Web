@@ -5,6 +5,7 @@
         class="book"
         v-for="book in props.books"
         :key="getBookKey(book)"
+        :class="{ 'is-source-book': isSourceSearchBook(book) }"
         role="button"
         tabindex="0"
         :aria-label="getBookActionLabel(book)"
@@ -23,9 +24,11 @@
           />
         </div>
         <div class="info">
-          <div class="name">{{ book.name }}</div>
+          <div class="name" :title="book.name">{{ book.name }}</div>
           <div class="sub">
-            <div class="author">{{ book.author || '作者未知' }}</div>
+            <div class="author" :title="book.author || '作者未知'">
+              {{ book.author || '作者未知' }}
+            </div>
             <div v-if="isSourceSearchBook(book)" class="update-info">
               <div class="dot">•</div>
               <div class="date source-name" :title="book.sourceName">
@@ -50,7 +53,7 @@
             最新：{{ book.latestChapterTitle }}
           </div>
           <div v-if="isSourceSearchBook(book)" class="source-book-actions">
-            <el-tag size="small" effect="plain"> 点击卡片站内预览 </el-tag>
+            <span class="preview-hint">点击卡片预览</span>
             <el-button
               class="import-book"
               text
@@ -73,6 +76,8 @@
             type="danger"
             size="small"
             @click.stop="handleDelete(book)"
+            @keydown.enter.stop
+            @keydown.space.stop
           >
             删除
           </el-button>
@@ -86,6 +91,7 @@ import type { Book, SourceSearchBook } from '@/book'
 import { dateFormat } from '../utils/utils'
 import API from '@api'
 import { getDisplayCoverUrl, getPlaceholderCover } from '@/utils/bookCover'
+import { isSourceSearchBook } from '@/utils/sourceSearch'
 
 type BookItem = Book | SourceSearchBook
 
@@ -104,8 +110,6 @@ const emit = defineEmits<{
   bookDelete: [book: Book]
   bookImport: [book: SourceSearchBook]
 }>()
-const isSourceSearchBook = (book: BookItem): book is SourceSearchBook =>
-  'entryType' in book && book.entryType === 'source-search'
 const handleClick = (book: BookItem) => emit('bookClick', book)
 const handleDelete = (book: Book) => emit('bookDelete', book)
 const handleImport = (book: BookItem) => {
@@ -149,54 +153,84 @@ const proxyImage = (evt: Event, book: BookItem) => {
   flex: 1;
   min-height: 0;
   overflow: auto;
+  padding-right: 2px;
 
   .wrapper {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
-    gap: 18px;
+    grid-template-columns: repeat(auto-fill, minmax(min(100%, 292px), 340px));
+    gap: var(--shelf-grid-gap, 16px);
+    align-content: start;
+    justify-content: start;
+    padding-bottom: 2px;
 
     .book {
+      --book-cover-width: 80px;
+      --book-cover-height: 112px;
+
+      position: relative;
       user-select: none;
       display: flex;
       cursor: pointer;
       min-width: 0;
-      padding: 18px;
+      padding: 16px;
       flex-direction: row;
-      align-items: center;
+      align-items: stretch;
+      gap: 16px;
       box-sizing: border-box;
       border: 1px solid var(--shelf-panel-border, #ebeef5);
-      border-radius: 16px;
-      background: var(--shelf-panel-bg, rgba(255, 255, 255, 0.72));
-      box-shadow: 0 10px 24px rgba(15, 23, 42, 0.05);
+      border-radius: var(--shelf-radius, 16px);
+      background:
+        linear-gradient(135deg, rgba(255, 255, 255, 0.18), transparent 42%),
+        var(--shelf-card-bg, var(--shelf-panel-bg, rgba(255, 255, 255, 0.78)));
+      box-shadow: var(--shelf-card-shadow, 0 10px 24px rgba(15, 23, 42, 0.06));
+      overflow: hidden;
       transition:
         transform 0.18s ease,
         box-shadow 0.18s ease,
         border-color 0.18s ease,
         background-color 0.18s ease;
 
+      &.is-source-book {
+        border-color: rgba(103, 194, 58, 0.26);
+      }
+
       .cover-img {
+        position: relative;
         flex: 0 0 auto;
-        width: 84px;
-        height: 112px;
+        width: var(--book-cover-width);
+        height: var(--book-cover-height);
+        border-radius: 11px;
+        background: var(--shelf-subpanel-bg, rgba(248, 250, 252, 0.72));
+
+        &::after {
+          position: absolute;
+          inset: 0;
+          pointer-events: none;
+          border-radius: inherit;
+          box-shadow:
+            inset 10px 0 16px rgba(15, 23, 42, 0.1),
+            inset 0 0 0 1px rgba(255, 255, 255, 0.16);
+          content: '';
+        }
 
         .cover {
-          width: 84px;
-          height: 112px;
+          width: 100%;
+          height: 100%;
           display: block;
           object-fit: cover;
-          border-radius: 10px;
-          box-shadow: 0 8px 18px rgba(15, 23, 42, 0.18);
+          border-radius: inherit;
+          box-shadow: 0 10px 20px rgba(15, 23, 42, 0.16);
         }
       }
 
       .info {
         display: flex;
         flex-direction: column;
-        justify-content: space-around;
+        justify-content: flex-start;
         align-items: flex-start;
-        height: 112px;
-        margin-left: 20px;
         flex: 1;
+        gap: 6px;
+        min-height: var(--book-cover-height);
         min-width: 0;
         overflow: hidden;
 
@@ -204,6 +238,7 @@ const proxyImage = (evt: Event, book: BookItem) => {
           max-width: 100%;
           font-size: 16px;
           font-weight: 700;
+          line-height: 1.35;
           color: var(--shelf-text, #33373d);
           overflow: hidden;
           text-overflow: ellipsis;
@@ -213,8 +248,9 @@ const proxyImage = (evt: Event, book: BookItem) => {
         .sub {
           display: flex;
           flex-direction: row;
-          align-items: baseline;
+          align-items: center;
           justify-content: flex-start;
+          width: 100%;
           max-width: 100%;
           min-width: 0;
           font-size: 12px;
@@ -223,11 +259,14 @@ const proxyImage = (evt: Event, book: BookItem) => {
 
           .update-info {
             display: flex;
+            align-items: center;
             flex: 1 1 auto;
+            gap: 7px;
             min-width: 0;
+
             .dot {
               flex: 0 0 auto;
-              margin: 0 7px;
+              color: var(--shelf-soft-muted, #8a94a3);
             }
           }
 
@@ -254,25 +293,46 @@ const proxyImage = (evt: Event, book: BookItem) => {
           align-items: center;
           flex-wrap: wrap;
           gap: 8px;
+          margin-top: auto;
           max-width: 100%;
 
           .import-book {
-            padding-left: 0;
+            height: 26px;
+            padding: 0 9px;
+            border-radius: 999px;
+          }
+
+          .preview-hint {
+            display: inline-flex;
+            align-items: center;
+            height: 24px;
+            padding: 0 9px;
+            border: 1px solid var(--el-border-color-lighter);
+            border-radius: 999px;
+            color: var(--shelf-soft-muted, #8a94a3);
+            background: var(--shelf-subpanel-bg, rgba(248, 250, 252, 0.72));
+            font-size: 12px;
+            line-height: 1;
           }
         }
 
         .delete-book {
           align-self: flex-start;
-          padding-left: 0;
+          height: 26px;
+          margin-top: auto;
+          padding: 0 9px;
+          border-radius: 999px;
+          background: rgba(245, 108, 108, 0.08);
         }
 
         .intro,
         .dur-chapter,
         .last-chapter {
+          width: 100%;
           color: var(--shelf-muted, #606975);
           font-size: 13px;
-          margin-top: 3px;
           font-weight: 500;
+          line-height: 1.45;
           word-wrap: break-word;
           overflow: hidden;
           text-overflow: ellipsis;
@@ -288,7 +348,16 @@ const proxyImage = (evt: Event, book: BookItem) => {
     .book:hover,
     .book:focus-visible {
       border-color: rgba(64, 158, 255, 0.36);
-      box-shadow: 0 18px 36px rgba(15, 23, 42, 0.12);
+      background:
+        linear-gradient(135deg, rgba(255, 255, 255, 0.24), transparent 42%),
+        var(
+          --shelf-card-hover-bg,
+          var(--shelf-card-bg, var(--shelf-panel-bg, rgba(255, 255, 255, 0.9)))
+        );
+      box-shadow: var(
+        --shelf-card-hover-shadow,
+        0 18px 36px rgba(15, 23, 42, 0.12)
+      );
       transform: translateY(-2px);
     }
 
@@ -296,10 +365,6 @@ const proxyImage = (evt: Event, book: BookItem) => {
       outline: 2px solid var(--el-color-primary);
       outline-offset: 2px;
     }
-  }
-
-  .wrapper:last-child {
-    margin-right: auto;
   }
 }
 
@@ -310,27 +375,35 @@ const proxyImage = (evt: Event, book: BookItem) => {
 @media screen and (max-width: 750px) {
   .books-wrapper {
     box-sizing: border-box;
-    padding: 16px;
+    padding: 0;
 
     .wrapper {
       display: flex;
       flex-direction: column;
-      gap: 12px;
+      gap: 10px;
 
       .book {
+        --book-cover-width: 68px;
+        --book-cover-height: 94px;
+
         box-sizing: border-box;
         width: 100%;
-        padding: 14px;
+        padding: 12px;
+        gap: 12px;
         border: 1px solid var(--shelf-panel-border, #ebeef5);
-        border-radius: 16px;
-        box-shadow: 0 8px 20px rgba(15, 23, 42, 0.05);
+        border-radius: 14px;
+        box-shadow: var(--shelf-card-shadow, 0 8px 20px rgba(15, 23, 42, 0.05));
 
         .info {
-          margin-left: 16px;
+          gap: 4px;
+
+          .name {
+            font-size: 15px;
+          }
 
           .sub {
             flex-wrap: wrap;
-            row-gap: 2px;
+            row-gap: 3px;
 
             .author {
               flex-basis: 100%;
@@ -338,11 +411,22 @@ const proxyImage = (evt: Event, book: BookItem) => {
 
             .update-info {
               width: 100%;
+              gap: 6px;
 
-              .dot {
+              .dot:first-child {
                 display: none;
               }
             }
+          }
+
+          .intro,
+          .dur-chapter,
+          .last-chapter {
+            font-size: 12px;
+          }
+
+          .source-book-actions {
+            gap: 6px;
           }
         }
       }

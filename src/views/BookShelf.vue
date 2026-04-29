@@ -9,10 +9,9 @@
       :api-target-tag-type="apiTargetTagType"
       :github-url="githubUrl"
       @source-search="searchBook"
-      @clear-source-search="clearSourceSearch"
+      @clear-source-search="returnToShelf"
       @recent-click="openReadingRecent"
       @open-source-manager="openBookSourceManager"
-      @open-source-search-dialog="openSourceSearchDialog"
       @import-txt="fileInput?.click()"
       @export-backup="exportStandaloneBackup"
       @restore-backup="backupFileInput?.click()"
@@ -42,15 +41,6 @@
       @dragleave="handleShelfDragLeave"
       @drop="handleShelfDrop"
     >
-      <shelf-feature-bar
-        v-if="
-          !showStandaloneEmptyState &&
-          !sourceSearchActive &&
-          !isSearchingSources
-        "
-        @open-source-manager="openBookSourceManager"
-        @open-source-search-dialog="openSourceSearchDialog"
-      />
       <source-search-panel
         v-if="sourceSearchActive || isSearchingSources"
         :keyword="sourceSearchKeyword"
@@ -60,7 +50,7 @@
         :api-target-name="apiTargetName"
         v-model:reports-expanded="sourceSearchReportsExpanded"
         @retry="searchBook"
-        @clear="clearSourceSearch"
+        @clear="returnToShelf"
         @manage="openBookSourceManager"
       />
       <shelf-empty-state
@@ -69,18 +59,15 @@
         @open-source-manager="openBookSourceManager"
         @open-source-search-dialog="openSourceSearchDialog"
       />
-      <div v-else-if="isSearchingSources" class="source-search-empty">
-        正在搜索「{{
-          sourceSearchKeyword
-        }}」，可点击“取消”或“返回书架”中止搜索。
-      </div>
       <div v-else-if="showLocalSearchEmptyState" class="source-search-empty">
         本地书架没有匹配「{{
           searchWord.trim()
         }}」的书籍。可清空关键词，或点击“在线搜书”搜索在线书籍。
       </div>
       <div
-        v-else-if="sourceSearchActive && books.length === 0"
+        v-else-if="
+          sourceSearchActive && !isSearchingSources && books.length === 0
+        "
         class="source-search-empty"
       >
         {{ sourceSearchEmptyMessage }}
@@ -131,7 +118,6 @@ import '@/assets/bookshelf.css'
 import '@/assets/fonts/shelffont.css'
 import DragImportMask from '@/components/bookshelf/DragImportMask.vue'
 import ShelfEmptyState from '@/components/bookshelf/ShelfEmptyState.vue'
-import ShelfFeatureBar from '@/components/bookshelf/ShelfFeatureBar.vue'
 import ShelfSidebar from '@/components/bookshelf/ShelfSidebar.vue'
 import SourceBookPreviewDialog from '@/components/SourceBookPreviewDialog.vue'
 import SourceSearchDialog from '@/components/SourceSearchDialog.vue'
@@ -250,6 +236,11 @@ const showLocalSearchEmptyState = computed(
 
 const openBookSourceManager = () => {
   router.push({ path: '/bookSource' })
+}
+
+const returnToShelf = () => {
+  clearSourceSearch()
+  searchWord.value = ''
 }
 
 const {
@@ -387,6 +378,13 @@ onUnmounted(
   --shelf-muted: #606975;
   --shelf-soft-muted: #8a94a3;
   --shelf-radius: 16px;
+  --shelf-page-gutter: clamp(24px, 3vw, 40px);
+  --shelf-mobile-gutter: 14px;
+  --shelf-grid-gap: 16px;
+  --shelf-card-bg: rgba(255, 255, 255, 0.84);
+  --shelf-card-hover-bg: rgba(255, 255, 255, 0.96);
+  --shelf-card-shadow: 0 10px 24px rgba(15, 23, 42, 0.06);
+  --shelf-card-hover-shadow: 0 18px 34px rgba(15, 23, 42, 0.12);
   --shelf-subpanel-bg: rgba(248, 250, 252, 0.72);
   --shelf-subpanel-border: rgba(148, 163, 184, 0.18);
   --shelf-warning-bg: rgba(230, 162, 60, 0.1);
@@ -395,6 +393,7 @@ onUnmounted(
 
   height: 100%;
   width: 100%;
+  min-height: 0;
   display: flex;
   flex-direction: row;
   color: var(--shelf-text);
@@ -406,8 +405,10 @@ onUnmounted(
 
   .shelf-wrapper {
     position: relative;
-    padding: 48px 48px;
+    padding: var(--shelf-page-gutter);
     width: 100%;
+    min-width: 0;
+    height: 100%;
     display: flex;
     flex-direction: column;
     box-sizing: border-box;
@@ -424,19 +425,28 @@ onUnmounted(
       outline-color 0.2s ease;
 
     .source-search-empty {
-      flex: 1;
       display: flex;
       align-items: center;
       justify-content: center;
-      min-height: 260px;
-      padding: 24px;
       box-sizing: border-box;
+      width: 100%;
+      max-width: 920px;
+      min-height: clamp(240px, 42vh, 420px);
+      margin: 0 auto;
+      padding: 24px 28px;
       border: 1px dashed var(--shelf-panel-border);
       border-radius: 18px;
       color: var(--shelf-muted);
       text-align: center;
       line-height: 1.8;
-      background: var(--shelf-panel-bg);
+      background:
+        radial-gradient(
+          circle at top,
+          rgba(64, 158, 255, 0.06),
+          transparent 40%
+        ),
+        var(--shelf-panel-bg);
+      box-shadow: var(--shelf-card-shadow, 0 12px 30px rgba(15, 23, 42, 0.06));
     }
 
     &.drag-over {
@@ -453,19 +463,29 @@ onUnmounted(
     flex-direction: column;
 
     .shelf-wrapper {
-      padding: 0;
+      padding: var(--shelf-mobile-gutter);
       flex-grow: 1;
+      height: auto;
+      min-height: 0;
+      overflow: visible;
 
       &.drag-over {
         outline-offset: -8px;
       }
 
       .source-search-empty {
-        margin: 16px;
+        min-height: 220px;
+        margin: 0;
+        padding: 20px 14px;
+        border-radius: 16px;
       }
 
       :deep(.el-loading-spinner) {
         display: none;
+      }
+
+      :deep(.source-search-summary) {
+        margin: 0 0 12px;
       }
     }
   }
@@ -479,6 +499,10 @@ onUnmounted(
   --shelf-text: #d7dbe0;
   --shelf-muted: #a0a7b0;
   --shelf-soft-muted: #7f8792;
+  --shelf-card-bg: rgba(31, 35, 39, 0.86);
+  --shelf-card-hover-bg: rgba(36, 41, 46, 0.96);
+  --shelf-card-shadow: 0 10px 24px rgba(0, 0, 0, 0.22);
+  --shelf-card-hover-shadow: 0 18px 34px rgba(0, 0, 0, 0.32);
   --shelf-subpanel-bg: rgba(17, 24, 39, 0.42);
   --shelf-subpanel-border: rgba(148, 163, 184, 0.16);
   --shelf-warning-bg: rgba(230, 162, 60, 0.14);

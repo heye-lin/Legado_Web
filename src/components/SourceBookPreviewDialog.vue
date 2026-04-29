@@ -7,16 +7,17 @@
     :teleported="false"
   >
     <div v-if="book === undefined" class="preview-empty">
-      请选择要预览的书源搜索结果。
+      请选择一个搜索结果进行预览。
     </div>
 
     <div v-else class="preview-body">
       <div class="preview-header">
         <div class="preview-cover">
           <img
+            :key="coverUrl"
             :src="coverUrl"
             :alt="`${bookName} 封面`"
-            @error.once="usePlaceholderCover"
+            @error="usePlaceholderCover"
           />
         </div>
         <div class="preview-meta">
@@ -40,7 +41,7 @@
               已在书架
             </el-tag>
             <el-tag v-if="preview" effect="plain">
-              共 {{ preview.chapterCount }} 章
+              目录 {{ preview.chapterCount }} 章
             </el-tag>
             <el-tag v-if="displayBook?.kind" effect="plain">
               {{ displayBook.kind }}
@@ -69,17 +70,20 @@
         :title="`预览失败：${errorMessage}`"
       />
       <template v-else-if="preview">
-        <section v-if="displayBook?.intro" class="preview-section">
+        <section v-if="displayIntro" class="preview-section">
           <div class="preview-section-title">简介</div>
-          <p class="preview-intro">{{ displayBook.intro }}</p>
+          <p class="preview-intro">{{ displayIntro }}</p>
         </section>
 
         <section class="preview-section">
           <div class="preview-section-title">
-            目录预览
-            <span>最多显示前 {{ preview.chapters.length }} 章</span>
+            目录
+            <span>{{ chapterPreviewText }}</span>
           </div>
-          <div class="preview-chapters">
+          <div v-if="preview.chapters.length === 0" class="preview-no-chapter">
+            暂未解析到目录。
+          </div>
+          <div v-else class="preview-chapters">
             <div
               v-for="chapter in preview.chapters"
               :key="chapter.index"
@@ -108,16 +112,18 @@
     </div>
 
     <template #footer>
-      <el-button @click="visible = false">关闭</el-button>
-      <el-button
-        v-if="book"
-        type="primary"
-        :loading="importing"
-        :disabled="loading || !preview || preview.alreadyOnShelf"
-        @click="emit('import', book)"
-      >
-        {{ importButtonText }}
-      </el-button>
+      <div class="preview-footer" :class="{ 'is-single': !book }">
+        <el-button @click="visible = false">关闭</el-button>
+        <el-button
+          v-if="book"
+          type="primary"
+          :loading="importing"
+          :disabled="loading || !preview || preview.alreadyOnShelf"
+          @click="emit('import', book)"
+        >
+          {{ importButtonText }}
+        </el-button>
+      </div>
     </template>
   </el-dialog>
 </template>
@@ -163,6 +169,28 @@ const importButtonText = computed(() => {
   return '加入书架'
 })
 
+const stripHtml = (value: string) =>
+  value
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<[^>]+>/g, '')
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/&amp;/gi, '&')
+    .replace(/&lt;/gi, '<')
+    .replace(/&gt;/gi, '>')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim()
+
+const displayIntro = computed(() => stripHtml(displayBook.value?.intro ?? ''))
+
+const chapterPreviewText = computed(() => {
+  if (props.preview === undefined) return ''
+  const visibleCount = props.preview.chapters.length
+  if (visibleCount === 0) return '暂未解析到目录'
+  return props.preview.chapterCount > visibleCount
+    ? `前 ${visibleCount} 章`
+    : `${visibleCount} 章`
+})
+
 const placeholderCover = computed(() =>
   getPlaceholderCover(
     displayBook.value ?? { name: bookName.value },
@@ -180,6 +208,7 @@ const coverUrl = computed(() => {
 
 const usePlaceholderCover = (event: Event) => {
   const target = event.target as HTMLImageElement
+  if (target.src === placeholderCover.value) return
   target.src = placeholderCover.value
 }
 </script>
@@ -190,7 +219,7 @@ const usePlaceholderCover = (event: Event) => {
   overflow: hidden;
   border: 1px solid var(--shelf-panel-border, var(--el-border-color-lighter));
   border-radius: var(--shelf-radius, 16px);
-  background: var(--shelf-panel-bg, var(--el-bg-color));
+  background: var(--el-bg-color);
   box-shadow: 0 18px 44px rgba(15, 23, 42, 0.18);
 }
 
@@ -207,23 +236,42 @@ const usePlaceholderCover = (event: Event) => {
   font-weight: 700;
 }
 
+:global(.source-book-preview-dialog .el-dialog__body),
+:global(.source-book-preview-dialog.el-dialog .el-dialog__body) {
+  max-height: calc(100vh - 180px);
+  overflow: auto;
+}
+
 .preview-empty,
 .preview-state {
-  padding: 28px;
+  padding: 30px 18px;
+  border: 1px dashed var(--shelf-panel-border, var(--el-border-color-lighter));
+  border-radius: 16px;
   color: var(--shelf-muted, var(--el-text-color-secondary));
   text-align: center;
+  background: var(--el-fill-color-lighter);
 }
 
 .preview-body {
   display: flex;
   flex-direction: column;
-  gap: 18px;
+  gap: 14px;
+}
+
+.preview-header,
+.preview-section {
+  display: flex;
+  padding: 14px;
+  border: 1px solid var(--shelf-panel-border, var(--el-border-color-lighter));
+  border-radius: 16px;
+  background:
+    linear-gradient(135deg, rgba(64, 158, 255, 0.06), transparent 48%),
+    var(--el-bg-color);
 }
 
 .preview-header {
-  display: flex;
-  gap: 18px;
-  align-items: flex-start;
+  gap: 16px;
+  align-items: stretch;
 }
 
 .preview-cover {
@@ -242,6 +290,10 @@ const usePlaceholderCover = (event: Event) => {
 }
 
 .preview-meta {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  justify-content: center;
   min-width: 0;
 
   h3 {
@@ -302,10 +354,7 @@ const usePlaceholderCover = (event: Event) => {
 }
 
 .preview-section {
-  padding: 14px 16px;
-  border: 1px solid var(--shelf-panel-border, var(--el-border-color-lighter));
-  border-radius: 16px;
-  background: var(--shelf-panel-bg, var(--el-bg-color));
+  flex-direction: column;
 }
 
 .preview-section-title {
@@ -325,14 +374,25 @@ const usePlaceholderCover = (event: Event) => {
 
 .preview-intro {
   margin: 0;
+  max-height: 220px;
+  overflow: auto;
   color: var(--shelf-muted, var(--el-text-color-secondary));
   line-height: 1.8;
   white-space: pre-wrap;
 }
 
 .preview-chapters {
-  max-height: 300px;
+  max-height: min(42vh, 300px);
   overflow: auto;
+}
+
+.preview-no-chapter {
+  padding: 22px 12px;
+  border: 1px dashed var(--shelf-panel-border, var(--el-border-color-lighter));
+  border-radius: 12px;
+  color: var(--shelf-muted, var(--el-text-color-secondary));
+  text-align: center;
+  background: var(--shelf-subpanel-bg, var(--el-fill-color-lighter));
 }
 
 .preview-chapter {
@@ -377,9 +437,78 @@ const usePlaceholderCover = (event: Event) => {
   white-space: nowrap;
 }
 
+.preview-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+
+  :deep(.el-button + .el-button) {
+    margin-left: 0;
+  }
+}
+
 @media screen and (max-width: 750px) {
+  :global(.source-book-preview-dialog.el-dialog),
+  :global(.source-book-preview-dialog .el-dialog) {
+    width: calc(100vw - 24px) !important;
+    border-radius: 18px;
+  }
+
+  :global(.source-book-preview-dialog .el-dialog__body),
+  :global(.source-book-preview-dialog.el-dialog .el-dialog__body) {
+    max-height: calc(100vh - 160px);
+  }
+
   .preview-header {
+    gap: 12px;
+    padding: 12px;
+  }
+
+  .preview-cover {
+    width: 78px;
+    height: 104px;
+
+    img {
+      width: 78px;
+      height: 104px;
+      border-radius: 10px;
+    }
+  }
+
+  .preview-meta {
+    justify-content: flex-start;
+
+    h3 {
+      font-size: 18px;
+    }
+  }
+
+  .preview-subtitle,
+  .preview-line {
+    font-size: 13px;
+  }
+
+  .preview-section {
+    padding: 12px;
+  }
+
+  .preview-section-title {
     flex-direction: column;
+    gap: 2px;
+    margin-bottom: 8px;
+  }
+
+  .preview-footer {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+
+    :deep(.el-button) {
+      width: 100%;
+    }
+
+    &.is-single {
+      grid-template-columns: 1fr;
+    }
   }
 
   .preview-chapter {
